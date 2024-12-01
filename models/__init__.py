@@ -1,0 +1,1 @@
+from .architecture.multi_input_model import build_multi_input_model

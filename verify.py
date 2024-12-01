@@ -9,3 +9,8 @@ print(segmentation_masks.shape)  # Should match total_frames
 hlc_data = np.load("data/processed/metadata/hlc.npy")
 print(hlc_data.shape)  # Should match total_frames
 
+# verify model
+from models import build_multi_input_model
+
+model = build_multi_input_model()
+# print(model.summary())
