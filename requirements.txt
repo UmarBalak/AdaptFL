@@ -1,0 +1,9 @@
+numpy
+tensorflow
+h5py
+flask
+flask-socketio
+scikit-learn
+loguru
+matplotlib
+fastapi
