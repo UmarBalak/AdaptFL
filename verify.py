@@ -1,16 +1,19 @@
-# verify preprocessing.py
-import numpy as np
-rgb_images = np.load("data/processed/rgb/rgb_images.npy")
-print(rgb_images.shape)  # Should be (total_frames, 128, 128, 3)
+import os
+import h5py
 
-segmentation_masks = np.load("data/processed/segmentation/segmentation_masks.npy")
-print(segmentation_masks.shape)  # Should match total_frames
+def load_hdf5_files_from_directory(directory_path):
+    """
+    Load HDF5 files from a specified directory.
+    """
+    hdf5_files = []
+    for file_name in os.listdir(directory_path):
+        if file_name.endswith(".hdf5"):
+            print(file_name)
+            file_path = os.path.join(directory_path, file_name)
+            with h5py.File(file_path, 'r') as hdf5_file:
+                hdf5_files.append(hdf5_file)
+    return hdf5_files
 
-hlc_data = np.load("data/processed/metadata/hlc.npy")
-print(hlc_data.shape)  # Should match total_frames
-
-# verify model
-from models import build_multi_input_model
-
-model = build_multi_input_model()
-# print(model.summary())
+EPISODE_PATH = "data/episodes/"  # Update to the correct folder containing .hdf5 files
+hdf5_files = load_hdf5_files_from_directory(EPISODE_PATH)
+print("Data loaded successfully.")
