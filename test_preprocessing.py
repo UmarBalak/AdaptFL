@@ -1,4 +1,4 @@
-from preprocessing import *
+from client import *
 import numpy as np
 
 def test_data_splitting():
