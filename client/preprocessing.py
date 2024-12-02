@@ -208,3 +208,80 @@ def preprocess_measurements_multiple_episodes(hdf5_files):
 
     measurements_combined = np.concatenate(measurements_combined, axis=0)
     return measurements_combined
+
+
+import numpy as np
+
+def split_data_for_models_multiple_types(data_dict, num_models, data_distribution, val_split=0.2, test_split=0.1, data_types=None, random_seed=None):
+    """
+    Split the preprocessed data into subsets for local models, validation set, and test set.
+
+    Parameters:
+    - data_dict: Dictionary containing various preprocessed data types (X, y, etc.).
+    - num_models: Number of local models to be implemented.
+    - data_distribution: List of proportions for each model's training data.
+    - val_split: Proportion of data to be used for validation.
+    - test_split: Proportion of data to be used for testing.
+    - data_types: List of data types to include in the split. If None, all data types are used.
+    - random_seed: Seed for reproducibility of data splits.
+
+    Returns:
+    - model_data: Dictionary containing training data for each model.
+    - val_data: Dictionary containing validation data.
+    - test_data: Dictionary containing test data.
+    """
+    
+    # Validate inputs
+    if len(data_distribution) != num_models:
+        raise ValueError("Length of data_distribution must match num_models.")
+    if not np.isclose(np.sum(data_distribution), 1.0):
+        raise ValueError("Data distribution must sum to 1.")
+
+    # Set random seed for reproducibility
+    if random_seed is not None:
+        np.random.seed(random_seed)
+
+    total_samples = len(data_dict['rgb'])  # Assumes all data types have the same length
+
+    # Split indices into training, validation, and test sets
+    indices = np.arange(total_samples)
+    np.random.shuffle(indices)  # Shuffle indices for randomness
+
+    # Calculate the number of samples for validation and test
+    val_size = int(total_samples * val_split)
+    test_size = int(total_samples * test_split)
+
+    val_indices = indices[:val_size]
+    test_indices = indices[val_size:val_size + test_size]
+    train_indices = indices[val_size + test_size:]
+
+    # Prepare validation and test data
+    val_data = {
+        key: np.array([data_dict[key][i] for i in val_indices])
+        for key in (data_types or data_dict.keys()) if key in data_dict
+    }
+
+    test_data = {
+        key: np.array([data_dict[key][i] for i in test_indices])
+        for key in (data_types or data_dict.keys()) if key in data_dict
+    }
+
+    # Prepare model data for training
+    model_data = {}
+    total_train_samples = len(train_indices)
+
+    start_idx = 0
+    for model_id in range(num_models):
+        # Calculate the number of samples for the current model
+        num_samples = int(data_distribution[model_id] * total_train_samples)
+        if model_id == num_models - 1:  # Last model gets any leftover data
+            num_samples = total_train_samples - start_idx
+
+        model_data[f'model_{model_id + 1}'] = {
+            key: np.array([data_dict[key][train_indices[i]] for i in range(start_idx, start_idx + num_samples)])
+            for key in (data_types or data_dict.keys()) if key in data_dict
+        }
+
+        start_idx += num_samples
+
+    return model_data, val_data, test_data
