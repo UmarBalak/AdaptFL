@@ -1,14 +1,8 @@
-confidential/
-data/
-processed_data/
-raw_data/
-saved_models/
 data/
 logs/
 models/
 test_data/
 preprocessed_data/
-global_model.h5
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
