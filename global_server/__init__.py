@@ -1,2 +1,2 @@
-from server import *
-from global_aggregation import *
+from .global_aggregation import *
+from .evaluate_model import *
