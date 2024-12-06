@@ -8,7 +8,7 @@ def setup_logger():
     Setup logging configuration.
     """
     logging.basicConfig(
-        filename="client_model_validation.log",
+        filename="logs/client_model_validation.log",
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s"
     )
