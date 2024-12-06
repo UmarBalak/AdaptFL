@@ -6,7 +6,7 @@ import numpy as np
 # Setup logger
 def setup_logger():
     logging.basicConfig(
-        filename="debug_weights.log",
+        filename="global_server/logs/debug_weights.log",
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
     )

@@ -1,2 +1,2 @@
-from .global_server import distribute_global_model, evaluate_global_model
+from .global_model_distribution import distribute_global_model, evaluate_global_model
 from .validation import validate_model_weights

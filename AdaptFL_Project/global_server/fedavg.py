@@ -1,68 +1,16 @@
 import os
 import numpy as np
 import tensorflow as tf
-from keras import models, layers
 import logging
+from datetime import datetime
+from model_utils import build_model
 
 # Setup logging
 logging.basicConfig(
-    filename="fedavg.log",
+    filename="global_server/logs/fedavg.log",
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
-
-def build_model(input_shapes):
-    """
-    Builds a multi-input model for predicting controls using multiple modalities.
-
-    Parameters:
-    - input_shapes: Dictionary of input shapes for each modality.
-
-    Returns:
-    - model: A Keras model.
-    """
-    inputs = []
-
-    # RGB images input
-    rgb_input = layers.Input(shape=input_shapes['rgb'], name="rgb")
-    rgb_branch = layers.Conv2D(32, (3, 3), activation='relu')(rgb_input)
-    rgb_branch = layers.MaxPooling2D()(rgb_branch)
-    rgb_branch = layers.Flatten()(rgb_branch)
-    inputs.append(rgb_input)
-
-    # Segmentation masks input
-    segmentation_input = layers.Input(shape=input_shapes['segmentation'], name="segmentation")
-    segmentation_branch = layers.Conv2D(32, (3, 3), activation='relu')(segmentation_input)
-    segmentation_branch = layers.MaxPooling2D()(segmentation_branch)
-    segmentation_branch = layers.Flatten()(segmentation_branch)
-    inputs.append(segmentation_input)
-
-    # High-Level Command input
-    hlc_input = layers.Input(shape=input_shapes['hlc'], name="hlc")
-    hlc_branch = layers.Dense(32, activation='relu')(hlc_input)
-    inputs.append(hlc_input)
-
-    # Traffic Light Status input
-    light_input = layers.Input(shape=input_shapes['light'], name="light")
-    light_branch = layers.Dense(32, activation='relu')(light_input)
-    inputs.append(light_input)
-
-    # Measurements input (speed)
-    measurements_input = layers.Input(shape=input_shapes['measurements'], name="measurements")
-    measurements_branch = layers.Dense(32, activation='relu')(measurements_input)
-    inputs.append(measurements_input)
-
-    # Concatenate all branches
-    concatenated = layers.concatenate([rgb_branch, segmentation_branch, hlc_branch, light_branch, measurements_branch])
-
-    # Output layer (for control predictions)
-    output = layers.Dense(3, activation='tanh', name="controls")(concatenated)
-
-    # Define the model
-    model = models.Model(inputs=inputs, outputs=output)
-    model.compile(optimizer='adam', loss='mse', metrics=['mae'])
-
-    return model
 
 # Example usage with input shapes
 input_shapes = {
@@ -76,24 +24,38 @@ model = build_model(input_shapes)
 
 def load_model_weights(client_dirs):
     """
-    Load model weights from all clients and extract weights.
+    Dynamically load model weights from all clients.
 
     Args:
         client_dirs (list): List of client directories.
 
     Returns:
-        weights (list): List of model weights as numpy arrays.
+        weights_list (list): List of model weights as numpy arrays.
     """
     weights_list = []
     for client_dir in client_dirs:
         try:
-            weights_path = os.path.join(client_dir, "models", "model_weights.h5")
-            if os.path.exists(weights_path):
-                # Consider adding a validation check for weight compatibility
-                model.load_weights(weights_path)
-                weights_list.append(model.get_weights())
+            # Dynamically find the latest saved model file
+            model_dir = os.path.join(client_dir, "models/local")
+            if not os.path.exists(model_dir):
+                logging.warning(f"Model directory not found: {model_dir}")
+                continue
+            
+            # Find the most recent model file based on timestamp in filename
+            model_files = [f for f in os.listdir(model_dir) if f.endswith(".h5")]
+            if not model_files:
+                logging.warning(f"No model files found in {model_dir}")
+                continue
+
+            latest_model = max(model_files, key=lambda f: os.path.getmtime(os.path.join(model_dir, f)))
+            model_path = os.path.join(model_dir, latest_model)
+            
+            # Load the model and append its weights
+            client_model = tf.keras.models.load_model(model_path)
+            weights_list.append(client_model.get_weights())
+            logging.info(f"Successfully loaded model weights from {model_path}")
         except Exception as e:
-            logging.error(f"Error loading weights for {client_dir}: {e}")
+            logging.error(f"Error loading model weights for {client_dir}: {e}")
     return weights_list
 
 def federated_averaging(weights_list):
@@ -113,17 +75,23 @@ def federated_averaging(weights_list):
     avg_weights = []
     for layer_weights in zip(*weights_list):  # Iterate layer-wise
         avg_weights.append(np.mean(layer_weights, axis=0))  # Average weights for each layer
+    logging.info("Federated averaging completed successfully.")
     return avg_weights
 
-def update_global_model(global_model_path, avg_weights):
+def update_global_model(global_model_dir, avg_weights, input_shapes):
     """
-    Update the global model with the aggregated weights.
+    Save the global model with aggregated weights and a timestamp for versioning.
 
     Args:
-        global_model_path (str): Path to save the global model.
+        global_model_dir (str): Directory to save the global model.
         avg_weights (list): Federated averaged weights.
+        input_shapes (dict): Input shapes for building the global model.
     """
-    # Recreate the global model
+    os.makedirs(global_model_dir, exist_ok=True)  # Ensure directory exists
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    global_model_path = os.path.join(global_model_dir, f"global_model_v{timestamp}.h5")
+
+    # Build, update, and save the global model
     model = build_model(input_shapes)
     model.set_weights(avg_weights)
     model.save(global_model_path)
@@ -147,14 +115,24 @@ def main():
         weights_list = load_model_weights(client_dirs)
 
         # Perform Federated Averaging
-        avg_weights = federated_averaging(weights_list)
+        if weights_list:
+            avg_weights = federated_averaging(weights_list)
 
-        # Update global model
-        global_model_path = "../AdaptFL_Project/global_server/global_model/global_model.h5"
-        update_global_model(global_model_path, avg_weights)
+            # Update global model
+            global_model_path = "../AdaptFL_Project/global_server/global_model"
+            input_shapes = {
+                "rgb": (128, 128, 3),  
+                "segmentation": (128, 128, 3),
+                "hlc": (1,),
+                "light": (1,),
+                "measurements": (1,)
+            }
+            update_global_model(global_model_path, avg_weights, input_shapes)
 
-        logging.info("Global model aggregation completed successfully.")
-    
+            logging.info("Global model aggregation completed successfully.")
+        else:
+            logging.error("No valid weights to aggregate.")
+
     except Exception as e:
         logging.error(f"Error in global server: {e}")
 
