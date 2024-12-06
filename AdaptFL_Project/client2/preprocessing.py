@@ -4,6 +4,7 @@ import os
 import cv2
 import logging
 import sys  # To capture command-line arguments
+import logging.handlers
 
 def preprocess_rgb_images(hdf5_files, image_size=(128, 128)):
     """
@@ -164,16 +165,16 @@ def preprocess_measurements_multiple_episodes(hdf5_files):
 
     measurements_combined = np.concatenate(measurements_combined, axis=0)
     return measurements_combined
-
 def setup_logger(client_id):
-    """Setup logger for preprocessing."""
     log_file = f"../AdaptFL_Project/{client_id}/logs/preprocessing.log"
+    handler = logging.handlers.RotatingFileHandler(
+        log_file, maxBytes=5*1024*1024, backupCount=3
+    )
     logging.basicConfig(
-        filename=log_file,
+        handlers=[handler],
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s"
     )
-
 def preprocess_client_data(client_id, image_size=(128, 128)):
     """
     Preprocess data for a specific client.
@@ -206,16 +207,13 @@ def preprocess_client_data(client_id, image_size=(128, 128)):
             "measurements": preprocess_measurements_multiple_episodes(hdf5_files),
         }
 
-        # Save preprocessed data
-        for key, data in preprocessed_data.items():
-            save_preprocessed_data(preprocessed_path, key, data)
+        # Save preprocessed data into a single file
+        save_preprocessed_data(preprocessed_path, preprocessed_data)
 
         logging.info(f"Preprocessing completed successfully for {client_id}")
 
     except Exception as e:
         logging.error(f"Error in preprocessing for {client_id}: {e}")
-
-
 def load_hdf5_files(directory_path):
     """
     Load all HDF5 files from a directory.
@@ -236,20 +234,19 @@ def load_hdf5_files(directory_path):
             except Exception as e:
                 logging.warning(f"Error loading file {filename}: {e}")
     return hdf5_files
-
-
-def save_preprocessed_data(save_path, dataset_name, data):
+def save_preprocessed_data(save_path, data_dict):
     """
-    Save preprocessed data to a file.
+    Save preprocessed data into a single .npz file containing all datasets.
 
     Parameters:
     - save_path: Directory to save the data.
-    - dataset_name: Name of the dataset (e.g., 'rgb').
-    - data: Preprocessed data to save.
+    - data_dict: Dictionary containing dataset names as keys and preprocessed data as values.
     """
-    save_file = os.path.join(save_path, f"{dataset_name}.npy")
-    np.save(save_file, data)
-    logging.info(f"Saved preprocessed data: {save_file}")
+    save_file = os.path.join(save_path, "preprocessed_data.npz")
+
+    # Save all datasets into a single .npz file
+    np.savez_compressed(save_file, **data_dict)
+    logging.info(f"Saved preprocessed data into: {save_file}")
 
 if __name__ == "__main__":
     preprocess_client_data("client2")

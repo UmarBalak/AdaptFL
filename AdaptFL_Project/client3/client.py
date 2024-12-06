@@ -7,6 +7,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import logging
 import numpy as np
 from keras import layers, models
+from datetime import datetime
+from keras.callbacks import ModelCheckpoint
 
 
 def setup_logger(client_id):
@@ -19,16 +21,17 @@ def setup_logger(client_id):
     )
 
 def load_preprocessed_data(client_id):
-    """Load preprocessed data for training."""
+    """Load preprocessed data for training from a .npz file."""
     preprocessed_data_path = f"../AdaptFL_Project/{client_id}/preprocessed_data"
-    data = {}
+    data_file = os.path.join(preprocessed_data_path, "preprocessed_data.npz")
 
-    for dataset_name in ["rgb", "segmentation", "controls", "frames", "hlc", "light", "measurements"]:
-        data[dataset_name] = np.load(os.path.join(preprocessed_data_path, f"{dataset_name}.npy"))
+    # Load the .npz file
+    data = np.load(data_file)
 
-    return data
+    # Convert npz data to a dictionary
+    loaded_data = {key: data[key] for key in data.keys()}
 
-from keras import layers, models
+    return loaded_data
 
 def build_model(input_shapes):
     """
@@ -92,7 +95,8 @@ input_shapes = {
     "measurements": (1,)
 }
 
-def train_model(model, data, epochs=5, batch_size=32):
+
+def train_model(model, data, client_id, epochs=5, batch_size=32):
     """Train the model on the preprocessed data."""
     rgb_data = data["rgb"]
     segmentation_data = data["segmentation"]
@@ -101,30 +105,52 @@ def train_model(model, data, epochs=5, batch_size=32):
     measurements_data = data["measurements"]
     controls_data = data["controls"]  # Target variable
 
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Define model checkpoint callback
+    checkpoint_callback = ModelCheckpoint(
+        filepath=f"../AdaptFL_Project/{client_id}/models/local/{client_id}_trained_model_{timestamp}.h5",  # Adjust path as needed
+        monitor='loss',  # Could be 'val_loss' or any other metric
+        save_best_only=True,
+        verbose=1
+    )
+
     model.fit(
         [rgb_data, segmentation_data, hlc_data, light_data, measurements_data],  # Inputs
         controls_data,  # Target (throttle, steer, brake)
         epochs=epochs,
         batch_size=batch_size,
-        verbose=1  # Enable verbose output for training process
+        verbose=1,
+        callbacks=[checkpoint_callback]
     )
 
 
 def save_model(client_id, model):
-    """Save the trained model."""
-    model_path = f"../AdaptFL_Project/{client_id}/models/trained_model.h5"
-    model.save(model_path)
-    logging.info(f"Model saved at {model_path}")
+    """
+    Save the trained model with a timestamp for versioning.
 
-def save_model_weights(client_id, model):
-    """Save the model weights locally for future upload to global server."""
-    model_weights_path = f"../AdaptFL_Project/{client_id}/models/model_weights.h5"
-    model.save_weights(model_weights_path)
-    logging.info(f"Model weights saved at {model_weights_path}")
+    Args:
+        client_id (str): The ID of the client (e.g., 'client1').
+        model: The trained model to be saved.
+    """
+    # Create a versioned filename with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    model_dir = f"../AdaptFL_Project/{client_id}/models/local"
+    os.makedirs(model_dir, exist_ok=True)  # Ensure the directory exists
+    model_path = os.path.join(model_dir, f"{client_id}_trained_model_{timestamp}.h5")
+    
+    # Save the model
+    try:
+        model.save(model_path)
+        logging.info(f"Model for {client_id} saved at {model_path}")
+    except Exception as e:
+        logging.error(f"Failed to save model for {client_id}: {e}")
+
+
 
 def main(client_id):
     """Main function to execute client training pipeline."""
-    # setup_logger(client_id)
+    setup_logger(client_id)
     logging.info(f"Starting training for {client_id}")
 
     try:
@@ -145,13 +171,10 @@ def main(client_id):
         model = build_model(input_shapes)
         print("Model created successfully")
 
-        train_model(model, data)
+        train_model(model, data, client_id)
 
         # Save the trained model
         save_model(client_id, model)
-
-        # Save model weights locally (instead of sharing with server yet)
-        save_model_weights(client_id, model)
 
         logging.info(f"Training completed successfully for {client_id}")
     
