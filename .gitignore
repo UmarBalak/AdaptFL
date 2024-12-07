@@ -8,7 +8,8 @@ logs/
 models/
 test_data/
 preprocessed_data/
-global_model.h5
+global_model/
+weights/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

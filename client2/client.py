@@ -105,24 +105,34 @@ def train_model(model, data, client_id, epochs=5, batch_size=32):
     measurements_data = data["measurements"]
     controls_data = data["controls"]  # Target variable
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    # Define model checkpoint callback
-    checkpoint_callback = ModelCheckpoint(
-        filepath=f"../AdaptFL_Project/{client_id}/models/local/{client_id}_trained_model_{timestamp}.h5",  # Adjust path as needed
-        monitor='loss',  # Could be 'val_loss' or any other metric
-        save_best_only=True,
-        verbose=1
-    )
-
     model.fit(
         [rgb_data, segmentation_data, hlc_data, light_data, measurements_data],  # Inputs
         controls_data,  # Target (throttle, steer, brake)
         epochs=epochs,
         batch_size=batch_size,
-        verbose=1,
-        callbacks=[checkpoint_callback]
+        verbose=1
     )
+
+def save_weights(client_id, model):
+    """
+    Save the trained model weights with a timestamp for versioning.
+
+    Args:
+        client_id (str): The ID of the client (e.g., 'client1').
+        model: The trained model whose weights are to be saved.
+    """
+    # Create a versioned filename with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    weights_dir = f"../AdaptFL_Project/{client_id}/models/local"
+    os.makedirs(weights_dir, exist_ok=True)  # Ensure the directory exists
+    weights_path = os.path.join(weights_dir, f"{client_id}_weights_{timestamp}.h5")
+    
+    # Save the weights
+    try:
+        model.save_weights(weights_path)
+        logging.info(f"Weights for {client_id} saved at {weights_path}")
+    except Exception as e:
+        logging.error(f"Failed to save weights for {client_id}: {e}")
 
 
 def save_model(client_id, model):
@@ -175,6 +185,7 @@ def main(client_id):
 
         # Save the trained model
         save_model(client_id, model)
+        save_weights(client_id, model)
 
         logging.info(f"Training completed successfully for {client_id}")
     
@@ -183,4 +194,4 @@ def main(client_id):
 
 if __name__ == "__main__":
     print("starting...")
-    main("client3")
+    main("client2")

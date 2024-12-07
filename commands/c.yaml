@@ -1,0 +1,8 @@
+python client1/preprocessing.py && python client2/preprocessing.py && python client3/preprocessing.py 
+
+python client1/client.py && python client2/client.py && python client3/client.py 
+
+python upload_weights.py client1\models\local\client1_trained_model_2024120
+6_163229.h5 client1_weights.h5
+
+python download_weights.py client1_weights.h5 global_server/weights/client1_weights.h5
