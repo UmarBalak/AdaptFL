@@ -1,0 +1,10 @@
+intro (report)
+
+literature (variety, ) 3
+proposed system (arch + desc) 2
+results (thoda manipulation for now is okk) 1
+
+conclusion
+
+return aayega.
+

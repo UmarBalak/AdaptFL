@@ -1,0 +1,41 @@
+we want end to end step by step implementation worlflow.
+like from creating folder to end product.
+help me step by step.
+start with 1st step.
+then after I confirm that the step if done, then go to next step.
+to confirm whether the step is done or not, give me some test cases also with step by step guide.
+
+
+
+data is is episodes in hdf5.
+Each frame is structured as follows:
+
+frame_data = {'frame': frame index,'hlc': high-level command,'light': current traffic light status,'controls': [throttle, steer, brake],'measurements': current speed in km/h,'rgb': rgb camera image,'segmentation': ground truth segmentation image,}
+Single HDF5 episode structure:
+controls, (x, 3),float64
+frame, (x, 1), int64
+hlc,  (x, 1), int64
+light, (x, 1), int64
+measurements, (x, 1), float64
+rgb, (x, 200, 288, 3), uint8
+segmentation, (x, 200, 288, 3), uint8
+
+data is in episodes in hdf5.
+Frame Structure:
+(Name, purpose, Shape, Type)
+-frame: index ,(x,1), int64
+-hlc: high-level command, (x,1), int64
+-light: traffic light status, (x,1), int64
+-controls: [throttle, steer, brake], (x,3), float64
+-measurements: speed (km/h), (x,1), float64
+-rgb: camera image, (x,200,288,3), uint8
+-segmentation: ground truth image, (x,200,288,3), uint8
+
+Datasets (Name, Shape, Type):
+- controls: (x,3), float64
+- frame: (x,1), int64
+- hlc: (x,1), int64
+- light: (x,1), int64
+- measurements: (x,1), float64
+- rgb: (x,200,288,3), uint8
+- segmentation: (x,200,288,3), uint8

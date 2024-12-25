@@ -13,7 +13,7 @@ from keras.callbacks import ModelCheckpoint
 
 def setup_logger(client_id):
     """Set up logging for client."""
-    log_file = f"../AdaptFL_Project/{client_id}/logs/training.log"
+    log_file = f"../{client_id}/logs/training.log"
     logging.basicConfig(
         filename=log_file,
         level=logging.INFO,
@@ -22,7 +22,7 @@ def setup_logger(client_id):
 
 def load_preprocessed_data(client_id):
     """Load preprocessed data for training from a .npz file."""
-    preprocessed_data_path = f"../AdaptFL_Project/{client_id}/preprocessed_data"
+    preprocessed_data_path = f"../{client_id}/preprocessed_data"
     data_file = os.path.join(preprocessed_data_path, "preprocessed_data.npz")
 
     # Load the .npz file
@@ -123,7 +123,7 @@ def save_weights(client_id, model):
     """
     # Create a versioned filename with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    weights_dir = f"../AdaptFL_Project/{client_id}/models/local"
+    weights_dir = f"../{client_id}/models/local"
     os.makedirs(weights_dir, exist_ok=True)  # Ensure the directory exists
     weights_path = os.path.join(weights_dir, f"{client_id}_weights_{timestamp}.h5")
     
@@ -145,7 +145,7 @@ def save_model(client_id, model):
     """
     # Create a versioned filename with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_dir = f"../AdaptFL_Project/{client_id}/models/local"
+    model_dir = f"../{client_id}/models/local"
     os.makedirs(model_dir, exist_ok=True)  # Ensure the directory exists
     model_path = os.path.join(model_dir, f"{client_id}_trained_model_{timestamp}.h5")
     

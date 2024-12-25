@@ -1,0 +1,13 @@
+clients share file to the server.
+
+server stores files in the temp storage.
+
+server process files.
+
+while processing, server needs all received file + last generated file by the server.
+
+server generates new file.
+
+distribute new file with clients.
+
+store the new file permanently. (used in next iteration along with new client files).
