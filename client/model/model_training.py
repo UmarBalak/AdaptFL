@@ -9,6 +9,22 @@ import numpy as np
 from keras import layers, models
 from datetime import datetime
 from keras.callbacks import ModelCheckpoint
+from azure.storage.blob import BlobServiceClient
+from dotenv import load_dotenv
+load_dotenv() 
+
+CONNECTION_STRING = os.getenv("AZURE_CONNECTION_STRING")
+CLIENT_CONTAINER_NAME = os.getenv("CLIENT_CONTAINER_NAME")
+print(CONNECTION_STRING, CLIENT_CONTAINER_NAME)
+blob_service_client = BlobServiceClient.from_connection_string(CONNECTION_STRING)
+
+def upload_file(filename: str, file_content):
+    try:
+        blob_client = blob_service_client.get_blob_client(container=CLIENT_CONTAINER_NAME, blob=filename)
+        blob_client.upload_blob(file_content, overwrite=True)
+        logging.info(f"File {filename} uploaded successfully to Azure Blob Storage.")
+    except Exception as e:
+        logging.error(f"Error uploading file: {e}")
 
 # Set up logger
 def setup_logger(client_id, log_dir):
@@ -37,7 +53,7 @@ def load_preprocessed_data(data_path):
     return loaded_data
 
 # Train the model
-def train_model(model, data, epochs=5, batch_size=32):
+def train_model(model, data, epochs=3, batch_size=32):
     """Train the model on the preprocessed data."""
     rgb_data = data["rgb"]
     segmentation_data = data["segmentation"]
@@ -66,9 +82,9 @@ def save_weights(client_id, model, save_dir):
     """
     # Create a versioned filename with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    weights_dir = os.path.join(save_dir, client_id, "models/local")
+    weights_dir = os.path.join(save_dir, "client", client_id, "models/local")
     os.makedirs(weights_dir, exist_ok=True)  # Ensure the directory exists
-    weights_path = os.path.join(weights_dir, f"{client_id}_weights_{timestamp}.keras")
+    weights_path = os.path.join(weights_dir, f"client{client_id}_weights_{timestamp}.keras")
     
     # Save the weights
     try:
@@ -76,6 +92,8 @@ def save_weights(client_id, model, save_dir):
         logging.info(f"Weights for {client_id} saved at {weights_path}")
     except Exception as e:
         logging.error(f"Failed to save weights for {client_id}: {e}")
+
+    return weights_path, timestamp
 
 # Save the trained model with versioning
 def save_model(client_id, model, save_dir):
@@ -89,9 +107,9 @@ def save_model(client_id, model, save_dir):
     """
     # Create a versioned filename with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_dir = os.path.join(save_dir, client_id, "models/local")
+    model_dir = os.path.join(save_dir, "client", client_id, "models/local")
     os.makedirs(model_dir, exist_ok=True)  # Ensure the directory exists
-    model_path = os.path.join(model_dir, f"{client_id}_trained_model_{timestamp}.keras")
+    model_path = os.path.join(model_dir, f"client{client_id}_trained_model_{timestamp}.keras")
     
     # Save the model
     try:
@@ -99,6 +117,9 @@ def save_model(client_id, model, save_dir):
         logging.info(f"Model for {client_id} saved at {model_path}")
     except Exception as e:
         logging.error(f"Failed to save model for {client_id}: {e}")
+
+    return model_path
+
 # Main function for training
 def main(client_id, data_path, save_dir, build_model, epochs=5, batch_size=32):
     """Main function to execute client training pipeline."""
@@ -126,11 +147,14 @@ def main(client_id, data_path, save_dir, build_model, epochs=5, batch_size=32):
         train_model(model, data, epochs, batch_size)
 
         # Save the trained model and weights
-        save_model(client_id, model, save_dir)
-        save_weights(client_id, model, save_dir)
+        model_path = save_model(client_id, model, save_dir)
+        weights_path, timestamp = save_weights(client_id, model, save_dir)
+
+        # Upload the saved weights file
+        with open(weights_path, "rb") as file:
+            upload_file(f"client{client_id}_local_weights_{timestamp}.keras", file.read())
 
         logging.info(f"Training completed successfully for {client_id}")
     
     except Exception as e:
         logging.error(f"Error during training for {client_id}: {e}")
-

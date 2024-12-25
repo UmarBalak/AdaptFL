@@ -22,7 +22,7 @@ def preprocess_data(client_id, raw_data_path, preprocessed_data_path, image_size
     except Exception as e:
         logging.error(f"Error in preprocessing for {client_id}: {e}")
 
-def train(client_id, data_path, save_dir, epochs=5, batch_size=32):
+def train(client_id, data_path, save_dir, epochs=3, batch_size=32):
     """Train the model for the client."""
     try:
         train_main(client_id, data_path, save_dir, build_model, epochs, batch_size)
@@ -32,20 +32,20 @@ def train(client_id, data_path, save_dir, epochs=5, batch_size=32):
 
 def main():
     """Main function to run preprocessing and training."""
-    client_id = "client1"
+    client_id = "1"
     # "/path/to/raw/data"
-    raw_data_path = "D:\AdaptFL\client1\data\episodes.hdf5"
+    raw_data_path = f"D:\AdaptFL\client{client_id}\data\episodes.hdf5"
     # "/path/to/preprocessed/data"
-    preprocessed_data_path = "D:\AdaptFL\client1\preprocessed_data"
+    preprocessed_data_path = f"D:\AdaptFL\client{client_id}\preprocessed_data"
     # "/path/to/save/models"
-    save_dir = "D:\AdaptFL\client1\models\local"
+    save_dir = f"D:\AdaptFL"
     # "/path/to/logs"
-    log_dir = "D:\AdaptFL\client1\logs"
+    log_dir = f"D:\AdaptFL\client{client_id}\logs"
 
     setup_logger(log_dir)
     logging.info("Starting client pipeline")
 
-    preprocess_data(client_id, raw_data_path, preprocessed_data_path)
+    # preprocess_data(client_id, raw_data_path, preprocessed_data_path)
     train(client_id, preprocessed_data_path, save_dir)
 
     logging.info("Client pipeline completed")
