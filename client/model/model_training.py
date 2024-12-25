@@ -10,6 +10,7 @@ from keras import layers, models
 from datetime import datetime
 from keras.callbacks import ModelCheckpoint
 from azure.storage.blob import BlobServiceClient
+from compression_utils import compress_weights, decompress_weights
 from dotenv import load_dotenv
 load_dotenv() 
 
@@ -20,8 +21,9 @@ blob_service_client = BlobServiceClient.from_connection_string(CONNECTION_STRING
 
 def upload_file(filename: str, file_content):
     try:
+        compressed_weights = compress_weights(file_content)
         blob_client = blob_service_client.get_blob_client(container=CLIENT_CONTAINER_NAME, blob=filename)
-        blob_client.upload_blob(file_content, overwrite=True)
+        blob_client.upload_blob(compressed_weights, overwrite=True)
         logging.info(f"File {filename} uploaded successfully to Azure Blob Storage.")
     except Exception as e:
         logging.error(f"Error uploading file: {e}")
