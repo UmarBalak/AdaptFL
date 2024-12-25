@@ -68,7 +68,7 @@ def save_weights(client_id, model, save_dir):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     weights_dir = os.path.join(save_dir, client_id, "models/local")
     os.makedirs(weights_dir, exist_ok=True)  # Ensure the directory exists
-    weights_path = os.path.join(weights_dir, f"{client_id}_weights_{timestamp}.h5")
+    weights_path = os.path.join(weights_dir, f"{client_id}_weights_{timestamp}.keras")
     
     # Save the weights
     try:
@@ -91,7 +91,7 @@ def save_model(client_id, model, save_dir):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     model_dir = os.path.join(save_dir, client_id, "models/local")
     os.makedirs(model_dir, exist_ok=True)  # Ensure the directory exists
-    model_path = os.path.join(model_dir, f"{client_id}_trained_model_{timestamp}.h5")
+    model_path = os.path.join(model_dir, f"{client_id}_trained_model_{timestamp}.keras")
     
     # Save the model
     try:
@@ -99,7 +99,6 @@ def save_model(client_id, model, save_dir):
         logging.info(f"Model for {client_id} saved at {model_path}")
     except Exception as e:
         logging.error(f"Failed to save model for {client_id}: {e}")
-
 # Main function for training
 def main(client_id, data_path, save_dir, build_model, epochs=5, batch_size=32):
     """Main function to execute client training pipeline."""
