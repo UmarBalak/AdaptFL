@@ -8,12 +8,23 @@ from keras.models import load_model
 from datetime import datetime
 import tempfile
 import io
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from contextlib import asynccontextmanager
+import asyncio
 
 from dotenv import load_dotenv
 load_dotenv()
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("server.log"),
+        logging.StreamHandler()
+    ]
+)
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -21,7 +32,7 @@ app = FastAPI()
 # Azure Blob Storage configuration
 CONNECTION_STRING = os.getenv("AZURE_CONNECTION_STRING")
 CLIENT_CONTAINER_NAME = os.getenv("CLIENT_CONTAINER_NAME")
-SERVER_CONTAINER_NAME = os.getenv("SERVER_CONTAINER_NAME")
+SERVER_CONTAINER_NAME = os.getenv("GLOBAL_CONTAINER_NAME")
 ARCH_BLOB_NAME = "model_architecture.keras"
 
 if not all([CONNECTION_STRING, CLIENT_CONTAINER_NAME, SERVER_CONTAINER_NAME]):
@@ -77,8 +88,6 @@ def load_weights_from_blob(blob_client: BlobClient, model) -> Optional[List[np.n
             os.unlink(temp_path)
         return None
 
-# [Previous federated_averaging function remains the same]
-
 def save_weights_to_blob(weights: List[np.ndarray], filename: str, model) -> bool:
     """
     Save model weights to a blob.
@@ -126,7 +135,6 @@ def federated_averaging(weights_list):
         avg_weights.append(np.mean(layer_weights, axis=0))  # Average weights for each layer
     logging.info("Federated averaging completed successfully.")
     return avg_weights
-
 
 @app.get("/aggregate-weights")
 async def aggregate_weights():
@@ -199,6 +207,22 @@ async def aggregate_weights():
             status_code=500,
             detail=f"Unexpected error during aggregation: {str(e)}"
         )
+
+# Scheduler setup
+scheduler = BackgroundScheduler()
+
+@scheduler.scheduled_job(CronTrigger(minute="*/1"))
+def scheduled_aggregate_weights():
+    """
+    Scheduled task to aggregate weights every hour.
+    """
+    logging.info("Scheduled task: Starting weight aggregation process.")
+    try:
+        asyncio.run(aggregate_weights())
+    except Exception as e:
+        logging.error(f"Error during scheduled weight aggregation: {e}")
+
+scheduler.start()
 
 if __name__ == "__main__":
     import uvicorn
