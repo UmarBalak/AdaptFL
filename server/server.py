@@ -1,9 +1,19 @@
 import os
 import logging
 import numpy as np
+from typing import List, Optional
 from fastapi import FastAPI, HTTPException
-from azure.storage.blob import BlobServiceClient
+from azure.storage.blob import BlobServiceClient, BlobClient
 from keras.models import load_model
+from datetime import datetime
+import tempfile
+import io
+
+from dotenv import load_dotenv
+load_dotenv()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -12,7 +22,90 @@ app = FastAPI()
 CONNECTION_STRING = os.getenv("AZURE_CONNECTION_STRING")
 CLIENT_CONTAINER_NAME = os.getenv("CLIENT_CONTAINER_NAME")
 SERVER_CONTAINER_NAME = os.getenv("SERVER_CONTAINER_NAME")
-blob_service_client = BlobServiceClient.from_connection_string(CONNECTION_STRING)
+ARCH_BLOB_NAME = "model_architecture.keras"
+
+if not all([CONNECTION_STRING, CLIENT_CONTAINER_NAME, SERVER_CONTAINER_NAME]):
+    raise ValueError("Missing required environment variables")
+
+try:
+    blob_service_client = BlobServiceClient.from_connection_string(CONNECTION_STRING)
+except Exception as e:
+    logging.error(f"Failed to initialize Azure Blob Service: {e}")
+    raise
+
+def get_model_architecture() -> Optional[object]:
+    """
+    Load model architecture from blob storage.
+    """
+    try:
+        container_client = blob_service_client.get_container_client(CLIENT_CONTAINER_NAME)
+        blob_client = container_client.get_blob_client(ARCH_BLOB_NAME)
+        
+        # Download architecture file to memory
+        arch_data = blob_client.download_blob().readall()
+        with tempfile.NamedTemporaryFile(suffix='.keras', delete=False) as temp_file:
+            temp_file.write(arch_data)
+            temp_path = temp_file.name
+        
+        model = load_model(temp_path)
+        os.unlink(temp_path)
+        return model
+    except Exception as e:
+        logging.error(f"Error loading model architecture: {e}")
+        if 'temp_path' in locals():
+            os.unlink(temp_path)
+        return None
+
+def load_weights_from_blob(blob_client: BlobClient, model) -> Optional[List[np.ndarray]]:
+    """
+    Load model weights from a blob.
+    """
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.keras', delete=False) as temp_file:
+            download_stream = blob_client.download_blob()
+            temp_file.write(download_stream.readall())
+            temp_path = temp_file.name
+
+        model.load_weights(temp_path)
+        weights = model.get_weights()
+        
+        os.unlink(temp_path)
+        return weights
+    except Exception as e:
+        logging.error(f"Error loading weights from blob: {e}")
+        if 'temp_path' in locals():
+            os.unlink(temp_path)
+        return None
+
+# [Previous federated_averaging function remains the same]
+
+def save_weights_to_blob(weights: List[np.ndarray], filename: str, model) -> bool:
+    """
+    Save model weights to a blob.
+    """
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.keras', delete=False) as temp_file:
+            temp_path = temp_file.name
+            model.set_weights(weights)
+            model.save_weights(temp_path)
+
+        blob_client = blob_service_client.get_blob_client(
+            container=SERVER_CONTAINER_NAME, 
+            blob=filename
+        )
+        
+        with open(temp_path, "rb") as file:
+            blob_client.upload_blob(file, overwrite=True)
+        
+        logging.info(f"Successfully saved weights to blob: {filename}")
+        return True
+    except Exception as e:
+        logging.error(f"Error saving weights to blob: {e}")
+        return False
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
 
 def federated_averaging(weights_list):
     """
@@ -27,79 +120,85 @@ def federated_averaging(weights_list):
     if not weights_list:
         logging.error("No weights available for aggregation")
         return None
-
+    
     avg_weights = []
     for layer_weights in zip(*weights_list):  # Iterate layer-wise
         avg_weights.append(np.mean(layer_weights, axis=0))  # Average weights for each layer
     logging.info("Federated averaging completed successfully.")
     return avg_weights
 
-def load_weights_from_blob(blob_client):
-    """
-    Load model weights from a blob.
-
-    Args:
-        blob_client: Blob client to download the weights.
-
-    Returns:
-        weights (list): Model weights.
-    """
-    with open("temp_model.keras", "wb") as file:
-        download_stream = blob_client.download_blob()
-        file.write(download_stream.readall())
-    
-    model = load_model("temp_model.keras")
-    weights = model.get_weights()
-    os.remove("temp_model.keras")
-    return weights
-
-def save_weights_to_blob(weights, filename):
-    """
-    Save model weights to a blob.
-
-    Args:
-        weights (list): Model weights to save.
-        filename (str): Name of the file to save the weights as.
-    """
-    model = load_model("temp_model.keras")
-    model.set_weights(weights)
-    model.save("temp_model.keras")
-
-    blob_client = blob_service_client.get_blob_client(container=SERVER_CONTAINER_NAME, blob=filename)
-    with open("temp_model.keras", "rb") as file:
-        blob_client.upload_blob(file, overwrite=True)
-    
-    os.remove("temp_model.keras")
 
 @app.get("/aggregate-weights")
 async def aggregate_weights():
+    """
+    Aggregate weights from all client models and save the result.
+    """
     try:
+        # Load model architecture from blob storage
+        model = get_model_architecture()
+        if model is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to load model architecture from blob storage"
+            )
+
+        # Get client weights
         container_client = blob_service_client.get_container_client(CLIENT_CONTAINER_NAME)
-        blob_list = container_client.list_blobs(name_starts_with="client")
+        blob_list = list(container_client.list_blobs(name_starts_with="client"))
+
+        if not blob_list:
+            raise HTTPException(
+                status_code=404,
+                detail="No client weight files found in the container"
+            )
 
         weights_list = []
         for blob in blob_list:
-            if blob.name.endswith(".keras"):
-                blob_client = container_client.get_blob_client(blob)
-                weights = load_weights_from_blob(blob_client)
+            if not blob.name.endswith(".keras"):
+                continue
+                
+            blob_client = container_client.get_blob_client(blob)
+            weights = load_weights_from_blob(blob_client, model)
+            if weights is not None:
                 weights_list.append(weights)
 
         if not weights_list:
-            raise HTTPException(status_code=404, detail="No .keras files found in the container")
+            raise HTTPException(
+                status_code=404,
+                detail="No valid weight files could be loaded"
+            )
 
+        # Perform federated averaging
         avg_weights = federated_averaging(weights_list)
         if avg_weights is None:
-            raise HTTPException(status_code=500, detail="Federated averaging failed")
+            raise HTTPException(
+                status_code=500,
+                detail="Federated averaging failed"
+            )
 
+        # Save aggregated weights
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"aggregated_weights_{timestamp}.keras"
-        save_weights_to_blob(avg_weights, filename)
+        if not save_weights_to_blob(avg_weights, filename, model):
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to save aggregated weights"
+            )
 
-        return {"message": "Federated averaging completed and weights saved successfully", "filename": filename}
-    
+        return {
+            "status": "success",
+            "message": f"Aggregated weights saved as {filename}",
+            "num_clients": len(weights_list)
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logging.error(f"Error during aggregation: {e}")
-        raise HTTPException(status_code=500, detail="Error during aggregation")
+        logging.error(f"Unexpected error during aggregation: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error during aggregation: {str(e)}"
+        )
 
 if __name__ == "__main__":
     import uvicorn
