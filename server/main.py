@@ -12,6 +12,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from contextlib import asynccontextmanager
 import asyncio
+import requests
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -34,6 +35,7 @@ CONNECTION_STRING = os.getenv("AZURE_CONNECTION_STRING")
 CLIENT_CONTAINER_NAME = os.getenv("CLIENT_CONTAINER_NAME")
 SERVER_CONTAINER_NAME = os.getenv("GLOBAL_CONTAINER_NAME")
 ARCH_BLOB_NAME = "model_architecture.keras"
+CLIENT_NOTIFICATION_URL = os.getenv("CLIENT_NOTIFICATION_URL")
 
 if not all([CONNECTION_STRING, CLIENT_CONTAINER_NAME, SERVER_CONTAINER_NAME]):
     raise ValueError("Missing required environment variables")
@@ -138,6 +140,22 @@ def federated_averaging(weights_list):
     logging.info("Federated averaging completed successfully.")
     return avg_weights
 
+def notify_client():
+    """
+    Notify the client to download the latest global model.
+    """
+    try:
+        # client_url = f"{CLIENT_NOTIFICATION_URL}/get_global_model"
+        client_url = "http://localhost:8050/get_global_model"
+        print(client_url)
+        response = requests.get(client_url, verify=False)
+        if response.status_code == 200:
+            logging.info("Client notified successfully.")
+        else:
+            logging.error(f"Failed to notify client. Status code: {response.status_code}")
+    except Exception as e:
+        logging.error(f"Error notifying client: {e}")
+
 @app.get("/aggregate-weights")
 async def aggregate_weights():
     """
@@ -194,6 +212,8 @@ async def aggregate_weights():
                 status_code=500,
                 detail="Failed to save aggregated weights"
             )
+        # Notify the client
+        notify_client()
 
         return {
             "status": "success",
