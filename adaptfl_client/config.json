@@ -1,7 +1,0 @@
-{
-    "client_id": "client1",
-    "dataset_path": "./datasets/client1",
-    "local_model_dir": "./models/client1",
-    "azure_connection_string": "DefaultEndpointsProtocol=https;AccountName=...",
-    "server_url": "http://127.0.0.1:8000/api"
-}
