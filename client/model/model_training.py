@@ -10,7 +10,6 @@ from keras import layers, models
 from datetime import datetime
 from keras.callbacks import ModelCheckpoint
 from azure.storage.blob import BlobServiceClient
-from compression_utils import compress_weights, decompress_weights
 from dotenv import load_dotenv
 load_dotenv() 
 
@@ -21,12 +20,13 @@ blob_service_client = BlobServiceClient.from_connection_string(CONNECTION_STRING
 
 def upload_file(filename: str, file_content):
     try:
-        compressed_weights = compress_weights(file_content)
         blob_client = blob_service_client.get_blob_client(container=CLIENT_CONTAINER_NAME, blob=filename)
-        blob_client.upload_blob(compressed_weights, overwrite=True)
+        blob_client.upload_blob(file_content, overwrite=True)
         logging.info(f"File {filename} uploaded successfully to Azure Blob Storage.")
+        print(f"File {filename} uploaded successfully to Azure Blob Storage.")
     except Exception as e:
         logging.error(f"Error uploading file: {e}")
+        print(f"Error uploading file: {e}")
 
 # Set up logger
 def setup_logger(client_id, log_dir):
@@ -151,11 +151,10 @@ def main(client_id, data_path, save_dir, build_model, epochs=5, batch_size=32):
         # Save the trained model and weights
         model_path = save_model(client_id, model, save_dir)
         weights_path, timestamp = save_weights(client_id, model, save_dir)
-
+        print("Model and weights saved successfully.")
         # Upload the saved weights file
         with open(weights_path, "rb") as file:
             upload_file(f"client{client_id}_local_weights_{timestamp}.keras", file.read())
-
         logging.info(f"Training completed successfully for {client_id}")
     
     except Exception as e:

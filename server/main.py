@@ -12,7 +12,6 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from contextlib import asynccontextmanager
 import asyncio
-from .compression_utils import decompress_weights
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -83,9 +82,7 @@ def load_weights_from_blob(blob_client: BlobClient, model) -> Optional[List[np.n
         
         os.unlink(temp_path)
 
-        decompressed_weights = decompress_weights(weights)
-
-        return decompressed_weights
+        return weights
     
     except Exception as e:
         logging.error(f"Error loading weights from blob: {e}")

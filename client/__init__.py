@@ -32,7 +32,7 @@ def train(client_id, data_path, save_dir, epochs=3, batch_size=32):
 
 def main():
     """Main function to run preprocessing and training."""
-    client_id = "1"
+    client_id = "3"
     # "/path/to/raw/data"
     raw_data_path = f"D:\AdaptFL\client{client_id}\data\episodes.hdf5"
     # "/path/to/preprocessed/data"

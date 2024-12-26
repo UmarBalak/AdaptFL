@@ -10,6 +10,7 @@ test_data/
 preprocessed_data/
 global_model/
 weights/
+client/model_weights/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
