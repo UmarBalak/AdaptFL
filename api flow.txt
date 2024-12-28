@@ -1,13 +1,36 @@
-clients share file to the server.
+1. Central Server Component:
 
-server stores files in the temp storage.
+Hosts a WebSocket endpoint that clients can connect to
+Maintains open connections with all edge devices
+Tracks connected clients through their client_ids
 
-server process files.
 
-while processing, server needs all received file + last generated file by the server.
+2. Edge Device Component:
 
-server generates new file.
+Initiates connection to server's WebSocket
+Sends its client_id for identification
+Maintains a persistent connection
+When notification received:
+* Downloads new weights from Azure Blob
+* Updates local model
+Auto-reconnects if connection drops
+----------------------------------------
+-Workflow:
+1. Edge device starts up:
 
-distribute new file with clients.
+Connects to server's WebSocket
+Identifies itself with client_id
+Starts its training process
 
-store the new file permanently. (used in next iteration along with new client files).
+2. Server performs aggregation:
+
+Collects weights from Azure Blob
+Performs federated averaging
+Saves new global weights
+Notifies all connected clients
+
+3. Edge devices receive notification:
+
+Download new weights from Azure
+Update their local models
+Continue training with updated weights

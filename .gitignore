@@ -11,6 +11,10 @@ preprocessed_data/
 global_model/
 weights/
 client/model_weights/
+*.keras
+*.h5
+*.hdf5
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
