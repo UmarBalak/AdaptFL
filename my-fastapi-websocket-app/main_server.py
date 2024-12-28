@@ -31,6 +31,7 @@ class ConnectionManager:
         self.active_connections: Dict[str, WebSocket] = {}
 
     async def connect(self, client_id: str, websocket: WebSocket):
+
         await websocket.accept()
         self.active_connections[client_id] = websocket
         logging.info(f"Client {client_id} connected. Total connections: {len(self.active_connections)}")
@@ -76,7 +77,8 @@ except Exception as e:
     logging.error(f"Failed to initialize Azure Blob Service: {e}")
     raise
 
-last_processed_timestamp = "00000000_000000"  # Initialize with a very old timestamp
+last_processed_timestamp = 0  # Initialize with 0
+latest_version = 0  # Initialize version number
 
 def get_model_architecture() -> Optional[object]:
     """
@@ -106,39 +108,57 @@ def load_weights_from_blob(
     blob_service_client: BlobServiceClient,
     container_name: str,
     model,
-    last_processed_timestamp: str
+    last_processed_timestamp: int
 ) -> Optional[List[np.ndarray]]:
     try:
         pattern = re.compile(r"local_weights_client\d+_v\d+_(\d{8}_\d{6})\.keras")
         container_client = blob_service_client.get_container_client(container_name)
 
+        weights_list = []
+        new_last_processed_timestamp = last_processed_timestamp
+        # debugging
         weights_files = []
+        weights_files_to_aggregate = []
+        present_files_in_blob = []
+        ############
         for blob in container_client.list_blobs():
             match = pattern.match(blob.name)
             if match:
-                timestamp = match.group(1)
-                if timestamp > last_processed_timestamp:
-                    weights_files.append((timestamp, blob.name))
+                present_files_in_blob.append(blob.name)
+                timestamp_str = match.group(1)
+                timestamp_int = int(timestamp_str.replace("_", ""))
+                if timestamp_int > last_processed_timestamp:
+                    blob_client = container_client.get_blob_client(blob.name)
+                    with tempfile.NamedTemporaryFile(suffix='.keras', delete=False) as temp_file:
+                        download_stream = blob_client.download_blob()
+                        temp_file.write(download_stream.readall())
+                        temp_path = temp_file.name
+                    model.load_weights(temp_path)
+                    weights = model.get_weights()
+                    os.unlink(temp_path)
+
+                    weights_list.append(weights)
+                    new_last_processed_timestamp = max(new_last_processed_timestamp, timestamp_int)
+
+                    # debugging
+                    weights_files.append((timestamp_int, blob.name))
+                    weights_files_to_aggregate.append(blob.name)
+                    #########
+
+        # debugging
+        for i in range(5):
+            print("******************************************************************************************************************************************************************************")
+        print(f"Present files in blob: {present_files_in_blob}", len(present_files_in_blob))
+        print(f"Files to aggregate: {weights_files_to_aggregate}", len(weights_files_to_aggregate))
+        print("--------------------------------------------------------")
+        ###########
 
         if not weights_files:
             logging.info(f"No new weights found since {last_processed_timestamp}.")
             return None, last_processed_timestamp
-
-        weights_files.sort(key=lambda x: x[0])
-        latest_timestamp, latest_file = weights_files[-1]
-
-        blob_client = container_client.get_blob_client(latest_file)
-        with tempfile.NamedTemporaryFile(suffix='.keras', delete=False) as temp_file:
-            download_stream = blob_client.download_blob()
-            temp_file.write(download_stream.readall())
-            temp_path = temp_file.name
-
-        model.load_weights(temp_path)
-        weights = model.get_weights()
-        os.unlink(temp_path)
-
-        logging.info(f"Loaded weights from {latest_file} (timestamp: {latest_timestamp}).")
-        return weights, latest_timestamp
+        
+        logging.info(f"Loaded weights from {len(weights_list)} files.")
+        return weights_list, new_last_processed_timestamp
 
     except Exception as e:
         logging.error(f"Error loading weights: {e}")
@@ -194,24 +214,36 @@ def federated_averaging(weights_list):
     logging.info("Federated averaging completed successfully.")
     return avg_weights
 
-def get_versioned_filename(prefix="global_model", extension="keras"):
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    version_pattern = re.compile(rf"{prefix}_v(\d+).*\.{extension}")
-    existing_versions = [
-        int(version_pattern.match(f).group(1))
-        for f in os.listdir()  # Assuming the current directory
-        if version_pattern.match(f)
-    ]
-    next_version = max(existing_versions, default=0) + 1
-    filename = f"{prefix}_v{next_version}_{timestamp}.{extension}"
+def get_versioned_filename(version: int, prefix="g", extension="keras"):
+    filename = f"{prefix}{version}.{extension}"
     return filename
+
+def get_latest_model_version() -> str:
+    # Fetch the latest model version based on saved files or in-memory state
+    container_client = blob_service_client.get_container_client(SERVER_CONTAINER_NAME)
+    blobs = container_client.list_blobs(name_starts_with="g")
+    
+    latest_version = 0
+    for blob in blobs:
+        match = re.match(r"g(\d+)\.keras", blob.name)
+        if match:
+            version = int(match.group(1))
+            if version > latest_version:
+                latest_version = version
+    
+    return f"g{latest_version}.keras" if latest_version > 0 else "none"
+
 
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
     await manager.connect(client_id, websocket)
     try:
+        # On connection, send the latest model version to the client
+        latest_model_version = get_latest_model_version()  # Retrieve the latest model version from server
+        await websocket.send_text(f"LATEST_MODEL:{latest_model_version}")
+        
         while True:
-            # Keep the connection alive and handle any messages from client
+            # Handle messages from the client (optional heartbeat or other logic)
             data = await websocket.receive_text()
             logging.info(f"Message from client {client_id}: {data}")
     except WebSocketDisconnect:
@@ -220,12 +252,14 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         logging.error(f"Error in websocket connection for client {client_id}: {e}")
         await manager.disconnect(client_id)
 
+
 @app.get("/aggregate-weights")
 async def aggregate_weights():
     """
     Aggregate weights from all client models and save the result.
     """
     global last_processed_timestamp  # Use the global variable to track the last processed timestamp
+    global latest_version  # Use the global variable to track the latest version
 
     try:
         # Load model architecture from blob storage
@@ -237,31 +271,9 @@ async def aggregate_weights():
             )
 
         # Get client weights with timestamp filtering
-        container_client = blob_service_client.get_container_client(CLIENT_CONTAINER_NAME)
-        blob_list = list(container_client.list_blobs(name_starts_with="local"))
-
-        if not blob_list:
-            raise HTTPException(
-                status_code=404,
-                detail="No client weight files found in the container"
-            )
-
-        weights_list = []
-        new_last_processed_timestamp = last_processed_timestamp  # Initialize with the current last processed timestamp
-        for blob in blob_list:
-            if not blob.name.endswith(".keras"):
-                continue
-                
-            # Fetch the blob's timestamp and compare with the last processed timestamp
-            blob_client = container_client.get_blob_client(blob)
-            weights, latest_timestamp = load_weights_from_blob(blob_service_client, CLIENT_CONTAINER_NAME, model, last_processed_timestamp)
-
-            # Skip blob if no new weights or if the timestamp is not updated
-            if weights is None or latest_timestamp <= last_processed_timestamp:
-                continue
-
-            weights_list.append(weights)
-            new_last_processed_timestamp = max(new_last_processed_timestamp, latest_timestamp)
+        weights_list, new_last_processed_timestamp = load_weights_from_blob(
+            blob_service_client, CLIENT_CONTAINER_NAME, model, last_processed_timestamp
+        )
 
         if not weights_list:
             logging.info("No valid weight files could be loaded for aggregation.")
@@ -280,7 +292,8 @@ async def aggregate_weights():
             )
 
         # Save aggregated weights
-        filename = get_versioned_filename()
+        latest_version += 1
+        filename = get_versioned_filename(latest_version)
         if save_weights_to_blob(avg_weights, filename, model):
             # Update the last processed timestamp only after successful save
             last_processed_timestamp = new_last_processed_timestamp

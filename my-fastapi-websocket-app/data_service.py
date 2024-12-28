@@ -32,7 +32,7 @@ def preprocess_data(client_id, raw_data_path, preprocessed_data_path, image_size
 def train(client_id, data_path, save_dir, epochs=1, batch_size=32):
     """Train the model for the client."""
     try:
-        train_main(client_id, data_path, save_dir, build_model, epochs, batch_size)
+        train_main(client_id, data_path, save_dir, build_model)
         logging.info(f"Training completed successfully for {client_id}")
     except Exception as e:
         logging.error(f"Error during training for {client_id}: {e}")
@@ -62,8 +62,8 @@ async def run_data_service(client_id):
                     preprocess_data(client_id, hdf5_file, preprocessed_data_path)
                     train(client_id, preprocessed_data_path, save_dir)
                     os.remove(hdf5_file)
-                    logging.info("Processed file deleted, waiting 6 hours")
-                    print("Processed file deleted, waiting 2 minutes")
+                    logging.info("Processed file deleted, waiting 4 hours")
+                    print("Processed file deleted, waiting 4 minutes")
                     await asyncio.sleep(240)
                 except Exception as e:
                     logging.error(f"Error processing data: {e}")
@@ -78,9 +78,15 @@ async def run_data_service(client_id):
             await asyncio.sleep(60)
 
 if __name__ == "__main__":
-    client_id = "3"
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Run WebSocket client service')
+    parser.add_argument('--c-id', required=True, help='Client ID')
+    
+    args = parser.parse_args()
+
     loop = asyncio.get_event_loop()
     try:
-        loop.run_until_complete(run_data_service(client_id))
+        loop.run_until_complete(run_data_service(args.c_id))
     except KeyboardInterrupt:
         loop.close()

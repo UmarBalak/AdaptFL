@@ -144,7 +144,7 @@ def upload_file(client_id, file_path, container_name):
 
 
 # Updated Main Function to Reflect Unified Versioning
-def main(client_id, data_path, save_dir, build_model, batch_size=32):
+def main(client_id, data_path, save_dir, build_model):
     setup_logger(client_id, save_dir)
     logging.info(f"Starting training for {client_id}")
 
@@ -166,7 +166,7 @@ def main(client_id, data_path, save_dir, build_model, batch_size=32):
         model = build_model(input_shapes)
         logging.info("Model created successfully.")
 
-        train_model(model, data, batch_size)
+        train_model(model, data)
 
         # Save and upload weights
         weights_path, timestamp = save_weights(client_id, model, save_dir)
