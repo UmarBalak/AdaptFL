@@ -14,10 +14,18 @@ from azure.storage.blob import BlobServiceClient
 from dotenv import load_dotenv
 load_dotenv() 
 
-CONNECTION_STRING = os.getenv("AZURE_CONNECTION_STRING")
+CLIENT_ACCOUNT_URL = os.getenv("CLIENT_ACCOUNT_URL")
 CLIENT_CONTAINER_NAME = os.getenv("CLIENT_CONTAINER_NAME")
-print(CONNECTION_STRING, CLIENT_CONTAINER_NAME)
-blob_service_client = BlobServiceClient.from_connection_string(CONNECTION_STRING)
+
+if not CLIENT_ACCOUNT_URL:
+    logging.error("SAS url environment variable is missing.")
+    raise ValueError("Missing required environment variable: SAS url")
+
+try:
+    BLOB_SERVICE_CLIENT = BlobServiceClient(account_url=CLIENT_ACCOUNT_URL)
+except Exception as e:
+    logging.error(f"Failed to initialize Azure Blob Service: {e}")
+    raise
 
 # Set up logger
 def setup_logger(client_id, log_dir):
@@ -133,7 +141,7 @@ def upload_file(client_id, file_path, container_name):
     """
     filename = os.path.basename(file_path)
     try:
-        blob_client = blob_service_client.get_blob_client(container=container_name, blob=filename)
+        blob_client = BLOB_SERVICE_CLIENT.get_blob_client(container=container_name, blob=filename)
         with open(file_path, "rb") as file:
             blob_client.upload_blob(file.read(), overwrite=True)
         logging.info(f"File {filename} uploaded successfully to Azure Blob Storage.")

@@ -8,11 +8,20 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-
-CONNECTION_STRING = os.getenv("AZURE_CONNECTION_STRING")
-GLOBAL_MODEL_CONTAINER_NAME = os.getenv("GLOBAL_CONTAINER_NAME")
+# Azure Blob Storage configuration
+SERVER_ACCOUNT_URL = os.getenv("SERVER_ACCOUNT_URL")
+SERVER_CONTAINER_NAME = os.getenv("SERVER_CONTAINER_NAME")
 LOCAL_DOWNLOAD_DIR = os.getenv("LOCAL_DOWNLOAD_DIR")
-BLOB_SERVICE_CLIENT = BlobServiceClient.from_connection_string(CONNECTION_STRING)
+
+if not SERVER_ACCOUNT_URL:
+    logging.error("SAS url environment variable is missing.")
+    raise ValueError("Missing required environment variable: SAS url")
+
+try:
+    BLOB_SERVICE_CLIENT = BlobServiceClient(account_url=SERVER_ACCOUNT_URL)
+except Exception as e:
+    logging.error(f"Failed to initialize Azure Blob Service: {e}")
+    raise
 
 class WebSocketClient:
     def __init__(self, client_id, server_host="localhost", server_port=8000):
@@ -162,7 +171,7 @@ class WebSocketClient:
             local_file_path = os.path.join(model_dir, filename)
 
             blob_client = BLOB_SERVICE_CLIENT.get_blob_client(
-                container=GLOBAL_MODEL_CONTAINER_NAME, 
+                container=SERVER_CONTAINER_NAME, 
                 blob=filename
             )
 
