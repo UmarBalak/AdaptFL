@@ -116,15 +116,12 @@ def load_weights_from_blob(
 
         weights_list = []
         new_last_processed_timestamp = last_processed_timestamp
-        # debugging
-        weights_files = []
-        weights_files_to_aggregate = []
-        present_files_in_blob = []
-        ############
-        for blob in container_client.list_blobs():
+
+        blobs = list(container_client.list_blobs())
+        # print(blobs)
+        for blob in blobs:
             match = pattern.match(blob.name)
             if match:
-                present_files_in_blob.append(blob.name)
                 timestamp_str = match.group(1)
                 timestamp_int = int(timestamp_str.replace("_", ""))
                 if timestamp_int > last_processed_timestamp:
@@ -140,20 +137,8 @@ def load_weights_from_blob(
                     weights_list.append(weights)
                     new_last_processed_timestamp = max(new_last_processed_timestamp, timestamp_int)
 
-                    # debugging
-                    weights_files.append((timestamp_int, blob.name))
-                    weights_files_to_aggregate.append(blob.name)
-                    #########
 
-        # debugging
-        for i in range(5):
-            print("******************************************************************************************************************************************************************************")
-        print(f"Present files in blob: {present_files_in_blob}", len(present_files_in_blob))
-        print(f"Files to aggregate: {weights_files_to_aggregate}", len(weights_files_to_aggregate))
-        print("--------------------------------------------------------")
-        ###########
-
-        if not weights_files:
+        if not weights_list:
             logging.info(f"No new weights found since {last_processed_timestamp}.")
             return None, last_processed_timestamp
         
