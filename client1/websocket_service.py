@@ -11,7 +11,9 @@ load_dotenv()
 # Azure Blob Storage configuration
 SERVER_ACCOUNT_URL = os.getenv("SERVER_ACCOUNT_URL")
 SERVER_CONTAINER_NAME = os.getenv("SERVER_CONTAINER_NAME")
-LOCAL_DOWNLOAD_DIR = os.getenv("LOCAL_DOWNLOAD_DIR")
+CLIENT_ID = os.getenv("CLIENT_ID")
+script_directory = os.path.dirname(os.path.realpath(__file__))
+LOCAL_DOWNLOAD_DIR = os.path.join(script_directory, "global_model")
 
 if not SERVER_ACCOUNT_URL:
     logging.error("SAS url environment variable is missing.")
@@ -22,11 +24,11 @@ try:
 except Exception as e:
     logging.error(f"Failed to initialize Azure Blob Service: {e}")
     raise
-
+    
 class WebSocketClient:
-    def __init__(self, client_id, server_host="localhost", server_port=8000):
+    def __init__(self, client_id, server_host="localhost"):
         self.client_id = client_id
-        self.server_url = f"ws://{server_host}:{server_port}/ws/{client_id}"
+        self.server_url = f"ws://{server_host}:443/ws/{client_id}"
         self.websocket = None
         self.connected = False
         self.reconnect_delay = 5  # Initial reconnect delay in seconds
@@ -185,29 +187,22 @@ class WebSocketClient:
             logging.error(f"Error downloading model: {e}")
             return None
 
-async def run_websocket_service(client_id, host="localhost", port=8000):
+async def run_websocket_service():
     """Independent WebSocket service."""
+    host = os.getenv("SERVER_HOST", "localhost")
+
     while True:
         try:
-            ws_client = WebSocketClient(client_id, host, port)
+            ws_client = WebSocketClient(CLIENT_ID, host)
             await ws_client.connect()
         except Exception as e:
             logging.error(f"WebSocket service error: {e}")
             await asyncio.sleep(5)  # Wait before restarting service
 
 if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description='Run WebSocket client service')
-    parser.add_argument('--client-id', required=True, help='Client ID')
-    parser.add_argument('--host', default='localhost', help='Server host')
-    parser.add_argument('--port', type=int, default=8000, help='Server port')
-    
-    args = parser.parse_args()
-
     loop = asyncio.get_event_loop()
     try:
-        loop.run_until_complete(run_websocket_service(args.client_id, args.host, args.port))
+        loop.run_until_complete(run_websocket_service())
     except KeyboardInterrupt:
         logging.info("Service stopped by user")
     finally:

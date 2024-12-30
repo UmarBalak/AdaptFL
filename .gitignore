@@ -14,6 +14,8 @@ client/model_weights/
 *.keras
 *.h5
 *.hdf5
+*.db
+*.json
 
 
 # Byte-compiled / optimized / DLL files

@@ -5,15 +5,16 @@ import asyncio
 from model_architecture import build_model
 from model_training import main as train_main
 from preprocessing import preprocess_client_data
-from datetime import datetime
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-def setup_logger(log_dir):
+script_directory = os.path.dirname(os.path.realpath(__file__))
+
+def setup_logger(script_directory):
     """Set up logging configuration."""
-    os.makedirs(log_dir, exist_ok=True)
+    log_dir = os.path.join(script_directory, "logs")
     logging.basicConfig(
         filename=os.path.join(log_dir, "client.log"),
         filemode="a",
@@ -21,21 +22,21 @@ def setup_logger(log_dir):
         format="%(asctime)s - %(levelname)s - %(message)s",
     )
 
-def preprocess_data(client_id, raw_data_path, preprocessed_data_path, image_size=(128, 128)):
+def preprocess_data(raw_data_path, preprocessed_data_path, image_size=(128, 128)):
     """Preprocess raw data for the client."""
     try:
-        preprocess_client_data(raw_data_path, preprocessed_data_path, client_id, image_size)
-        logging.info(f"Preprocessing completed successfully for {client_id}")
+        preprocess_client_data(raw_data_path, preprocessed_data_path, image_size)
+        logging.info(f"Preprocessing completed successfully.")
     except Exception as e:
-        logging.error(f"Error in preprocessing for {client_id}: {e}")
+        logging.error(f"Error in preprocessing: {e}")
 
 def train(client_id, data_path, save_dir, epochs=1, batch_size=32):
     """Train the model for the client."""
     try:
         train_main(client_id, data_path, save_dir, build_model)
-        logging.info(f"Training completed successfully for {client_id}")
+        logging.info(f"Training completed successfully.")
     except Exception as e:
-        logging.error(f"Error during training for {client_id}: {e}")
+        logging.error(f"Error during training: {e}")
 
 def check_raw_data(raw_data_dir):
     """Check for .hdf5 files in raw data directory."""
@@ -44,12 +45,12 @@ def check_raw_data(raw_data_dir):
 
 async def run_data_service(client_id):
     """Independent data processing service."""
-    raw_data_dir = f"D:/AdaptFL/client{client_id}/data"
-    preprocessed_data_path = f"D:/AdaptFL/client{client_id}/preprocessed_data"
-    save_dir = f"D:/AdaptFL"
-    log_dir = f"D:/AdaptFL/client{client_id}/logs"
+    script_directory = os.path.dirname(os.path.realpath(__file__))
+    raw_data_dir = os.path.join(script_directory, "raw_data")
+    preprocessed_data_path = os.path.join(script_directory, "processed_data")
+    save_dir = os.path.join(script_directory, "trained_models")
 
-    setup_logger(log_dir)
+    setup_logger(script_directory)
 
     while True:
         try:
@@ -59,9 +60,9 @@ async def run_data_service(client_id):
                 logging.info(f"Found new data: {hdf5_file}")
                 print(f"Found new data: {hdf5_file}")
                 try:
-                    preprocess_data(client_id, hdf5_file, preprocessed_data_path)
+                    preprocess_data(hdf5_file, preprocessed_data_path)
                     train(client_id, preprocessed_data_path, save_dir)
-                    os.remove(hdf5_file)
+                    # os.remove(hdf5_file)
                     logging.info("Processed file deleted, waiting 4 hours")
                     print("Processed file deleted, waiting 4 minutes")
                     await asyncio.sleep(240)
@@ -78,15 +79,12 @@ async def run_data_service(client_id):
             await asyncio.sleep(60)
 
 if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description='Run WebSocket client service')
-    parser.add_argument('--c-id', required=True, help='Client ID')
-    
-    args = parser.parse_args()
+    client_id = os.getenv("CLIENT_ID")
+    if not client_id:
+        raise ValueError("CLIENT_ID environment variable not set.")
 
     loop = asyncio.get_event_loop()
     try:
-        loop.run_until_complete(run_data_service(args.c_id))
+        loop.run_until_complete(run_data_service(client_id))
     except KeyboardInterrupt:
         loop.close()

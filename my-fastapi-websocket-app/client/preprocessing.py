@@ -6,13 +6,13 @@ from skimage.transform import resize
 
 # --- Utility functions ---
 
-def setup_logger(client_id, log_dir):
+def setup_logger(log_dir):
     """
     Set up a client-specific logger.
     """
-    os.makedirs(log_dir, exist_ok=True)
+    log_dir = os.path.join(log_dir, "logs")
     logging.basicConfig(
-        filename=os.path.join(log_dir, f"{client_id}_preprocessing.log"),
+        filename=os.path.join(log_dir, "preprocessing.log"),
         filemode="a",
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
@@ -93,29 +93,29 @@ def save_preprocessed_data(output_path, data):
 
 # --- Main preprocessing function ---
 
-def preprocess_client_data(data_path, output_path, client_id, image_size=(128, 128), log_dir=None):
+def preprocess_client_data(data_path, output_path, image_size=(128, 128)):
     """
-    Preprocess data for the client identified by the client_id.
+    Preprocess data for the client..
 
     Parameters:
     - data_path: Path to the raw data (single HDF5 file).
     - output_path: Path to store preprocessed data.
-    - client_id: Client identifier for logging.
     - image_size: Target size for resizing images.
-    - log_dir: Path to store log files.
 
     Saves:
     - Preprocessed data into the output_path folder for the respective client.
     """
-    if log_dir is None:
-        log_dir = os.path.join(output_path, "logs")
+    script_directory = os.path.dirname(os.path.realpath(__file__))
 
-    setup_logger(client_id, log_dir)  # Set up client-specific logging
-    logging.info(f"Starting preprocessing for {client_id}")
+    setup_logger(script_directory)  # Set up client-specific logging
+    logging.info(f"Starting preprocessing...")
+    print("preprocessing started")
 
     try:
         # Load the single HDF5 file
+        print(data_path)
         hdf5_file = load_hdf5_file(data_path)
+        print("file loaded")
 
         # Preprocess the data
         preprocessed_data = {
@@ -131,7 +131,7 @@ def preprocess_client_data(data_path, output_path, client_id, image_size=(128, 1
         # Save preprocessed data into a single file
         save_preprocessed_data(output_path, preprocessed_data)
 
-        logging.info(f"Preprocessing completed successfully for {client_id}")
+        logging.info(f"Preprocessing completed successfully.")
 
     except Exception as e:
-        logging.error(f"Error in preprocessing for {client_id}: {e}")
+        logging.error(f"Error in preprocessing: {e}")

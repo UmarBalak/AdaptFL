@@ -7,9 +7,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import logging
 import re
 import numpy as np
-from keras import layers, models
 from datetime import datetime
-from keras.callbacks import ModelCheckpoint
 from azure.storage.blob import BlobServiceClient
 from dotenv import load_dotenv
 load_dotenv() 
@@ -28,9 +26,10 @@ except Exception as e:
     raise
 
 # Set up logger
-def setup_logger(client_id, log_dir):
+def setup_logger():
     """Set up logging for client."""
-    log_file = os.path.join(log_dir, f"{client_id}_training.log")
+    script_directory = os.path.dirname(os.path.realpath(__file__))
+    log_file = os.path.join(script_directory, "logs","training.log")
     logging.basicConfig(
         filename=log_file,
         level=logging.INFO,
@@ -102,10 +101,9 @@ def save_weights(client_id, model, save_dir):
     """
     Save model weights with versioning.
     """
-    weights_dir = os.path.join(save_dir, "client", client_id, "models/local")
-    os.makedirs(weights_dir, exist_ok=True)
+    os.makedirs(save_dir, exist_ok=True)
 
-    weights_path, next_version, timestamp = get_versioned_filename(client_id, weights_dir)
+    weights_path, next_version, timestamp = get_versioned_filename(client_id, save_dir)
     try:
         model.save_weights(weights_path)
         logging.info(f"Weights for {client_id} saved at {weights_path}")
@@ -118,10 +116,9 @@ def save_model(client_id, model, save_dir):
     """
     Save the trained model with versioning.
     """
-    model_dir = os.path.join(save_dir, "client", client_id, "models/local")
-    os.makedirs(model_dir, exist_ok=True)
+    os.makedirs(save_dir, exist_ok=True)
 
-    model_path, next_version, timestamp = get_versioned_filename(client_id, model_dir)
+    model_path, next_version, timestamp = get_versioned_filename(client_id, save_dir)
     try:
         model.save(model_path)
         logging.info(f"Model for {client_id} saved at {model_path}")
@@ -130,7 +127,7 @@ def save_model(client_id, model, save_dir):
     return model_path
 
 
-def upload_file(client_id, file_path, container_name):
+def upload_file(file_path, container_name):
     """
     Upload a file to Azure Blob Storage with versioned naming.
 
@@ -153,13 +150,14 @@ def upload_file(client_id, file_path, container_name):
 
 # Updated Main Function to Reflect Unified Versioning
 def main(client_id, data_path, save_dir, build_model):
-    setup_logger(client_id, save_dir)
-    logging.info(f"Starting training for {client_id}")
+    setup_logger()
+    logging.info(f"Starting training...")
 
     try:
         # Load preprocessed data
         data = load_preprocessed_data(data_path)
         logging.info("Data loaded successfully.")
+        print("Data loaded successfully")
 
         # Define the input shapes
         input_shapes = {
@@ -173,19 +171,20 @@ def main(client_id, data_path, save_dir, build_model):
         # Build and train the model
         model = build_model(input_shapes)
         logging.info("Model created successfully.")
+        print("model created successfully")
 
         train_model(model, data)
 
         # Save and upload weights
         weights_path, timestamp = save_weights(client_id, model, save_dir)
-        upload_file(client_id, weights_path, CLIENT_CONTAINER_NAME)
+        upload_file(weights_path, CLIENT_CONTAINER_NAME)
 
         # Save and upload the full model
-        model_path = save_model(client_id, model, save_dir)
+        # model_path = save_model(client_id, model, save_dir)
 
-        logging.info(f"Training completed successfully for {client_id}")
+        logging.info(f"Training completed successfully.")
         print("Training and upload completed successfully.")
     
     except Exception as e:
-        logging.error(f"Error during training for {client_id}: {e}")
-        print(f"Error during training for {client_id}: {e}")
+        logging.error(f"Error during training: {e}")
+        print(f"Error during training: {e}")

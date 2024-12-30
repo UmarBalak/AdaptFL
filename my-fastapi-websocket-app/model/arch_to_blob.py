@@ -1,11 +1,11 @@
 import os
 from azure.storage.blob import BlobServiceClient
-from keras.models import Model
+from tensorflow.keras.models import Model
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def upload_model_architecture(model: Model, connection_string: str, container_name: str):
+def upload_model_architecture(model: Model, blob_service_client, container_name: str):
     """
     Upload model architecture to Azure Blob Storage.
     
@@ -20,7 +20,6 @@ def upload_model_architecture(model: Model, connection_string: str, container_na
         model.save(temp_path)
         
         # Upload to blob storage
-        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
         blob_client = blob_service_client.get_blob_client(
             container=container_name, 
             blob="model_architecture.keras"
@@ -43,9 +42,15 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
     
-    # Get your connection string and container name from environment variables
-    CONNECTION_STRING = os.getenv("AZURE_CONNECTION_STRING")
+    # Azure Blob Storage configuration
+    CLIENT_ACCOUNT_URL = os.getenv("CLIENT_ACCOUNT_URL")
     CLIENT_CONTAINER_NAME = os.getenv("CLIENT_CONTAINER_NAME")
+
+    try:
+        blob_service_client = BlobServiceClient(account_url=CLIENT_ACCOUNT_URL)
+    except Exception as e:
+        logging.error(f"Failed to initialize Azure Blob Service: {e}")
+        raise
     
     # Create your model (example)
     from model_architecture import build_model
@@ -62,4 +67,4 @@ if __name__ == "__main__":
     model = build_model(input_shapes)
 
     # Upload the architecture
-    upload_model_architecture(model, CONNECTION_STRING, CLIENT_CONTAINER_NAME)
+    upload_model_architecture(model, blob_service_client, CLIENT_CONTAINER_NAME)
