@@ -70,7 +70,7 @@ def train_model(model, data, epochs=1, batch_size=32):
         verbose=1
     )
 
-def get_versioned_filename(client_id, save_dir, prefix="local_weights", extension="keras"):
+def get_versioned_filename(client_id, save_dir, extension="keras"):
     """
     Generate a versioned filename with timestamp for saving models or weights.
 
@@ -86,14 +86,14 @@ def get_versioned_filename(client_id, save_dir, prefix="local_weights", extensio
         str: Timestamp for the file.
     """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    version_pattern = re.compile(rf"{prefix}_client{client_id}_v(\d+).*\.{extension}")
+    version_pattern = re.compile(rf"client{client_id}_v(\d+).*\.{extension}")
     existing_versions = [
         int(version_pattern.match(f).group(1))
         for f in os.listdir(save_dir)
         if version_pattern.match(f)
     ]
     next_version = max(existing_versions, default=0) + 1
-    filename = f"{prefix}_client{client_id}_v{next_version}_{timestamp}.{extension}"
+    filename = f"client{client_id}_v{next_version}_{timestamp}.{extension}"
     return os.path.join(save_dir, filename), next_version, timestamp
 
 

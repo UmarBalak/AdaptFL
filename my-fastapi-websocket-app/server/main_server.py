@@ -19,6 +19,44 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import os
+from sqlalchemy import create_engine, Column, String, DateTime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
+from datetime import datetime
+
+# Database configuration
+DATABASE_URL = os.getenv("DATABASE_URL")  # Format: postgresql://user:password@host:port/database
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable is missing")
+
+# SQLAlchemy setup
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+# Client model
+class Client(Base):
+    __tablename__ = "clients"
+    
+    csn = Column(String, primary_key=True)
+    client_id = Column(String, unique=True, nullable=False)
+    api_key = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+# Create tables
+Base.metadata.create_all(bind=engine)
+
+# Database dependency
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -142,7 +180,7 @@ def load_weights_from_blob(
     last_processed_timestamp: int
 ) -> Optional[List[np.ndarray]]:
     try:
-        pattern = re.compile(r"local_weights_client\d+_v\d+_(\d{8}_\d{6})\.keras")
+        pattern = re.compile(r"local_weights_client[0-9a-fA-F\-]+_v\d+_(\d{8}_\d{6})\.keras")
         container_client = blob_service_client_client.get_container_client(container_name)
 
         weights_list = []
@@ -255,55 +293,56 @@ def verify_admin(api_key: str):
     if api_key != admin_key:
         raise HTTPException(status_code=403, detail="Unauthorized admin access")
 
+# Modified registration endpoint
 @app.post("/register")
 async def register(
-    csn: str = Body(...), 
-    admin_api_key: str = Body(...)
+    csn: str = Body(...),
+    admin_api_key: str = Body(...),
+    db: Session = Depends(get_db)
 ):
-    """
-    Registers a client using its unique CSN.
-    Only admin users can register clients.
-    """
-    # Verify admin authentication
     verify_admin(admin_api_key)
-
-    credentials = load_client_credentials()
-
-    # Check if CSN is already registered
-    if csn in credentials:
+    
+    existing_client = db.query(Client).filter(Client.csn == csn).first()
+    if existing_client:
         raise HTTPException(status_code=400, detail="Client already registered")
-
-    # Generate client_id and api_key
+    
     client_id = str(uuid.uuid4())
     api_key = str(uuid.uuid4())
-
-    # Store credentials
-    credentials[csn] = {"client_id": client_id, "api_key": api_key}
-    save_client_credentials(credentials)
-
+    
+    new_client = Client(
+        csn=csn,
+        client_id=client_id,
+        api_key=api_key
+    )
+    
+    db.add(new_client)
+    db.commit()
+    
     return {
         "status": "success",
         "message": "Client registered successfully",
         "data": {"client_id": client_id, "api_key": api_key}
     }
 
-
+# Modified WebSocket endpoint
 @app.websocket("/ws/{client_id}")
-async def websocket_endpoint(websocket: WebSocket, client_id: str):
-    credentials = load_client_credentials()
-    if client_id not in credentials:
+async def websocket_endpoint(
+    websocket: WebSocket,
+    client_id: str,
+    db: Session = Depends(get_db)
+):
+    client = db.query(Client).filter(Client.client_id == client_id).first()
+    if not client:
         await websocket.close(code=1008, reason="Unauthorized")
         logging.error(f"Unauthorized connection attempt from client {client_id}")
         return
 
     await manager.connect(client_id, websocket)
     try:
-        # On connection, send the latest model version to the client
-        latest_model_version = get_latest_model_version()  # Retrieve the latest model version from server
+        latest_model_version = get_latest_model_version()
         await websocket.send_text(f"LATEST_MODEL:{latest_model_version}")
         
         while True:
-            # Handle messages from the client (optional heartbeat or other logic)
             data = await websocket.receive_text()
             logging.info(f"Message from client {client_id}: {data}")
     except WebSocketDisconnect:
@@ -311,7 +350,6 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
     except Exception as e:
         logging.error(f"Error in websocket connection for client {client_id}: {e}")
         await manager.disconnect(client_id)
-
 
 @app.get("/aggregate-weights")
 async def aggregate_weights():
@@ -383,7 +421,7 @@ async def aggregate_weights():
 # Scheduler setup
 scheduler = BackgroundScheduler()
 
-@scheduler.scheduled_job(CronTrigger(minute="*/5"))
+@scheduler.scheduled_job(CronTrigger(minute="*/1"))
 def scheduled_aggregate_weights():
     """
     Scheduled task to aggregate weights every minute.
