@@ -56,7 +56,6 @@ def get_db():
         db.close()
 
 
-
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -180,7 +179,7 @@ def load_weights_from_blob(
     last_processed_timestamp: int
 ) -> Optional[List[np.ndarray]]:
     try:
-        pattern = re.compile(r"local_weights_client[0-9a-fA-F\-]+_v\d+_(\d{8}_\d{6})\.keras")
+        pattern = re.compile(r"client[0-9a-fA-F\-]+_v\d+_(\d{8}_\d{6})\.keras")
         container_client = blob_service_client_client.get_container_client(container_name)
 
         weights_list = []
