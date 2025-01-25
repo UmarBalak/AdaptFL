@@ -13,27 +13,53 @@ from apscheduler.triggers.cron import CronTrigger
 import asyncio
 import re
 import json
+from sqlalchemy import func
+import matplotlib.pyplot as plt
+import io
+from PIL import Image
+import base64
+from fastapi.responses import StreamingResponse
+from datetime import datetime, timedelta
 import uuid
 from fastapi import Body
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(dotenv_path='.env.server')
 
 import os
-from sqlalchemy import create_engine, Column, String, DateTime
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy import create_engine, Column, String, DateTime, Table, Integer, ForeignKey
+from sqlalchemy.orm import sessionmaker, Session, relationship, declarative_base
 from datetime import datetime
 
 # Database configuration
 DATABASE_URL = os.getenv("DATABASE_URL")  # Format: postgresql://user:password@host:port/database
+print(DATABASE_URL)
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL environment variable is missing")
+global_vars = {
+    'last_processed_timestamp': 0,
+    'latest_version': 0
+}
 
 # SQLAlchemy setup
 engine = create_engine(DATABASE_URL)
+print("------------------------------")
+print("session created")
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+print("------------------------------")
+print("session created")
 Base = declarative_base()
+print("------------------------------")
+print("session created")
+
+# Association table for many-to-many relationship between GlobalModel and Client
+client_model_association = Table(
+    'client_model_association', Base.metadata,
+    Column('client_id', String, ForeignKey('clients.client_id')),
+    Column('model_id', Integer, ForeignKey('global_models.id'))
+)
+print("------------------------------")
+print("session created")
 
 # Client model
 class Client(Base):
@@ -43,15 +69,48 @@ class Client(Base):
     client_id = Column(String, unique=True, nullable=False)
     api_key = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(String, default="Inactive")
+    contribution_count = Column(Integer, default=0)
 
-# Create tables
-Base.metadata.create_all(bind=engine)
+    models_contributed = relationship("GlobalModel", secondary=client_model_association, back_populates="clients")
+
+# GlobalModel model
+class GlobalModel(Base):
+    __tablename__ = "global_models"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    version = Column(Integer, unique=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    num_clients_contributed = Column(Integer, default=0)
+    client_ids = Column(String) # Comma-seperated
+
+    clients = relationship("Client", secondary=client_model_association, back_populates="models_contributed")
+
+# Example SQLAlchemy model for Global Variables
+class GlobalVars(Base):
+    __tablename__ = "global_vars"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String, unique=True, index=True)
+    value = Column(String)  # Can store timestamps, latest version, etc.
+
+
+try:
+    # Create tables
+    Base.metadata.create_all(bind=engine)
+except Exception as e:
+    print("-----------------------------------")
+    print(f"yaha error hai {e}")
+
 
 # Database dependency
 def get_db():
     db = SessionLocal()
     try:
         yield db
+        db.commit()  # Commit changes before closing
+    except Exception:
+        db.rollback()  # Rollback on error
     finally:
         db.close()
 
@@ -74,6 +133,7 @@ class ConnectionManager:
 
         await websocket.accept()
         self.active_connections[client_id] = websocket
+
         logging.info(f"Client {client_id} connected. Total connections: {len(self.active_connections)}")
 
     async def disconnect(self, client_id: str):
@@ -119,25 +179,6 @@ except Exception as e:
     logging.error(f"Failed to initialize Azure Blob Service: {e}")
     raise
 
-last_processed_timestamp = 0  # Initialize with 0
-latest_version = 0  # Initialize version number
-
-
-# Store client credentials
-# Get the current directory of the script
-script_directory = os.path.dirname(os.path.realpath(__file__))
-CLIENT_CREDENTIALS_FILE = os.path.join(script_directory, "server_client_credentials.json")
-if not os.path.exists(CLIENT_CREDENTIALS_FILE):
-    with open(CLIENT_CREDENTIALS_FILE, "w") as f:
-        json.dump({}, f)
-
-def load_client_credentials():
-    with open(CLIENT_CREDENTIALS_FILE, "r") as f:
-        return json.load(f)
-
-def save_client_credentials(credentials):
-    with open(CLIENT_CREDENTIALS_FILE, "w") as f:
-        json.dump(credentials, f)
 
 
 def get_model_architecture() -> Optional[object]:
@@ -156,7 +197,8 @@ def get_model_architecture() -> Optional[object]:
             temp_file.write(arch_data)
             temp_path = temp_file.name
         
-        model = keras.models.load_model(temp_path)
+        model = keras.models.load_model(temp_path, compile=False)
+
         os.unlink(temp_path)
         return model
     
@@ -172,52 +214,151 @@ def get_model_architecture() -> Optional[object]:
         return None
 
 
+# def load_weights_from_blob(
+#     blob_service_client_client: BlobServiceClient,
+#     container_name: str,
+#     model,
+#     last_processed_timestamp: int
+# ) -> Optional[List[np.ndarray]]:
+#     try:
+#         pattern = re.compile(r"client[0-9a-fA-F\-]+_v\d+_(\d{8}_\d{6})\.keras")
+#         container_client = blob_service_client_client.get_container_client(container_name)
+
+#         weights_list = []
+#         new_last_processed_timestamp = last_processed_timestamp
+
+#         blobs = list(container_client.list_blobs())
+#         # print(blobs)
+#         for blob in blobs:
+#             match = pattern.match(blob.name)
+#             if match:
+#                 timestamp_str = match.group(1)
+#                 timestamp_int = int(timestamp_str.replace("_", ""))
+#                 if timestamp_int > last_processed_timestamp:
+#                     blob_client = container_client.get_blob_client(blob.name)
+#                     with tempfile.NamedTemporaryFile(suffix='.keras', delete=False) as temp_file:
+#                         download_stream = blob_client.download_blob()
+#                         temp_file.write(download_stream.readall())
+#                         temp_path = temp_file.name
+#                     model.load_weights(temp_path)
+#                     weights = model.get_weights()
+#                     os.unlink(temp_path)
+
+#                     weights_list.append(weights)
+#                     new_last_processed_timestamp = max(new_last_processed_timestamp, timestamp_int)
+
+
+#         if not weights_list:
+#             logging.info(f"No new weights found since {last_processed_timestamp}.")
+#             return None, last_processed_timestamp
+        
+#         logging.info(f"Loaded weights from {len(weights_list)} files.")
+#         return weights_list, new_last_processed_timestamp
+
+#     except Exception as e:
+#         logging.error(f"Error loading weights: {e}")
+#         if 'temp_path' in locals() and os.path.exists(temp_path):
+#             os.unlink(temp_path)
+#         return None, last_processed_timestamp
+
+import logging
+import os
+import re
+import tempfile
+from typing import List, Optional, Tuple
+import numpy as np
+from azure.storage.blob import BlobServiceClient
+
 def load_weights_from_blob(
-    blob_service_client_client: BlobServiceClient,
+    blob_service_client: BlobServiceClient,
     container_name: str,
     model,
     last_processed_timestamp: int
-) -> Optional[List[np.ndarray]]:
+) -> Optional[Tuple[List[np.ndarray], List[dict], int]]:
     try:
+        # Compile regex pattern to match blob names
         pattern = re.compile(r"client[0-9a-fA-F\-]+_v\d+_(\d{8}_\d{6})\.keras")
-        container_client = blob_service_client_client.get_container_client(container_name)
+        container_client = blob_service_client.get_container_client(container_name)
 
         weights_list = []
+        num_examples_list = []
+        loss_list = []
         new_last_processed_timestamp = last_processed_timestamp
 
         blobs = list(container_client.list_blobs())
-        # print(blobs)
+        
         for blob in blobs:
             match = pattern.match(blob.name)
             if match:
                 timestamp_str = match.group(1)
                 timestamp_int = int(timestamp_str.replace("_", ""))
-                if timestamp_int > last_processed_timestamp:
+                if timestamp_int > int(last_processed_timestamp):
                     blob_client = container_client.get_blob_client(blob.name)
+                    
+                    # Download the blob and load weights
                     with tempfile.NamedTemporaryFile(suffix='.keras', delete=False) as temp_file:
                         download_stream = blob_client.download_blob()
                         temp_file.write(download_stream.readall())
                         temp_path = temp_file.name
+                    
+                    # Load weights into the model
                     model.load_weights(temp_path)
                     weights = model.get_weights()
+                    
+                    # Fetch metadata from the blob
+                    blob_metadata = blob_client.get_blob_properties().metadata
+                    print("---------------------------------------")
+                    print(blob_metadata)
+                    if blob_metadata:
+                        # Convert metadata values to appropriate types if necessary
+                        num_examples = int(blob_metadata.get('num_examples', 0))
+                        loss = float(blob_metadata.get('loss', 0.0))
+                        if num_examples == 0:
+                            continue  # Skip blobs with no valid 'num_examples' metadata
+                        num_examples_list.append(num_examples)
+                        loss_list.append(loss)
+
+                    # Clean up temporary file
                     os.unlink(temp_path)
 
+                    # Store weights and update timestamps
                     weights_list.append(weights)
                     new_last_processed_timestamp = max(new_last_processed_timestamp, timestamp_int)
 
-
         if not weights_list:
             logging.info(f"No new weights found since {last_processed_timestamp}.")
-            return None, last_processed_timestamp
-        
+            return None, [], [], last_processed_timestamp
+
+        # if len(weights_list) < 2:
+        #     logging.info("Only 1 weight file is found.")
+        #     return None, [], [], last_processed_timestamp
+
         logging.info(f"Loaded weights from {len(weights_list)} files.")
-        return weights_list, new_last_processed_timestamp
+        print(num_examples_list)
+        return weights_list, num_examples_list, loss_list, new_last_processed_timestamp
 
     except Exception as e:
         logging.error(f"Error loading weights: {e}")
         if 'temp_path' in locals() and os.path.exists(temp_path):
             os.unlink(temp_path)
-        return None, last_processed_timestamp
+        return None, [], [], last_processed_timestamp
+
+# Load the last processed timestamp from the database
+def load_last_processed_timestamp(db):
+    timestamp = db.query(GlobalVars).filter_by(key="last_processed_timestamp").first()
+    return timestamp.value if timestamp else None
+
+# Save the last processed timestamp to the database
+def save_last_processed_timestamp(db, new_timestamp):
+    timestamp_record = db.query(GlobalVars).filter_by(key="last_processed_timestamp").first()
+    if timestamp_record:
+        timestamp_record.value = new_timestamp
+    else:
+        # If the timestamp doesn't exist, insert a new record
+        new_record = GlobalVars(key="last_processed_timestamp", value=new_timestamp)
+        db.add(new_record)
+    db.commit()
+
 
 def save_weights_to_blob(weights: List[np.ndarray], filename: str, model) -> bool:
     """
@@ -247,50 +388,119 @@ def save_weights_to_blob(weights: List[np.ndarray], filename: str, model) -> boo
         if temp_path and os.path.exists(temp_path):
             os.unlink(temp_path)
 
-def federated_averaging(weights_list):
-    """
-    Perform Federated Averaging on a list of model weights.
-
-    Args:
-        weights_list (list): List of model weights from clients.
-
-    Returns:
-        avg_weights (list): Federated averaged weights.
-    """
-    if not weights_list:
-        logging.error("No weights available for aggregation")
+def federated_weighted_averaging(weights_list, num_examples_list, loss_list, alpha=0.7):
+    """Perform Weighted Federated Averaging with improved loss weighting."""
+    if not weights_list or not num_examples_list or not loss_list:
+        logging.error("Missing inputs for aggregation.")
         return None
     
-    avg_weights = []
-    for layer_weights in zip(*weights_list):  # Iterate layer-wise
-        avg_weights.append(np.mean(layer_weights, axis=0))  # Average weights for each layer
-    logging.info("Federated averaging completed successfully.")
+    total_examples = sum(num_examples_list)
+    if total_examples == 0:
+        logging.error("Total examples is zero.")
+        return None
+
+    # Softmax-based loss weighting
+    loss_weights = np.exp(-np.array(loss_list))
+    loss_weights = loss_weights / np.sum(loss_weights)
+    
+    # Combine data size and loss weights
+    final_weights = []
+    for i in range(len(weights_list)):
+        data_weight = num_examples_list[i] / total_examples
+        combined_weight = alpha * data_weight + (1 - alpha) * loss_weights[i]
+        final_weights.append(combined_weight)
+    
+    # Normalize final weights
+    final_weights = np.array(final_weights) / np.sum(final_weights)
+    
+    # Initialize and compute weighted average
+    avg_weights = [np.zeros_like(layer, dtype=np.float64) for layer in weights_list[0]]
+    for i, layer_weights in enumerate(zip(*weights_list)):
+        for client_idx, client_weights in enumerate(layer_weights):
+            avg_weights[i] += client_weights * final_weights[client_idx]
+            
     return avg_weights
+
+import numpy as np
+
+def add_laplace_noise(weights, epsilon, sensitivity):
+    """
+    Adds Laplace noise to the model weights for differential privacy.
+    - weights: model weights to perturb.
+    - epsilon: privacy budget.
+    - sensitivity: sensitivity of the weights.
+    """
+    noise = np.random.laplace(0, sensitivity / epsilon, size=weights.shape)
+    return weights + noise
+
+def federated_weighted_averaging_with_dp(weights_list, num_examples_list, loss_list, epsilon=0.1, sensitivity=1.0, alpha=0.7):
+    """Perform Weighted Federated Averaging with DP noise addition to the aggregated weights."""
+    if not weights_list or not num_examples_list or not loss_list:
+        logging.error("Missing inputs for aggregation.")
+        return None
+    
+    total_examples = sum(num_examples_list)
+    if total_examples == 0:
+        logging.error("Total examples is zero.")
+        return None
+
+    # Softmax-based loss weighting
+    loss_weights = np.exp(-np.array(loss_list))
+    loss_weights = loss_weights / np.sum(loss_weights)
+    
+    # Combine data size and loss weights
+    final_weights = []
+    for i in range(len(weights_list)):
+        data_weight = num_examples_list[i] / total_examples
+        combined_weight = alpha * data_weight + (1 - alpha) * loss_weights[i]
+        final_weights.append(combined_weight)
+    
+    # Normalize final weights
+    final_weights = np.array(final_weights) / np.sum(final_weights)
+    
+    # Initialize and compute weighted average
+    avg_weights = [np.zeros_like(layer, dtype=np.float64) for layer in weights_list[0]]
+    for i, layer_weights in enumerate(zip(*weights_list)):
+        for client_idx, client_weights in enumerate(layer_weights):
+            avg_weights[i] += client_weights * final_weights[client_idx]
+
+    # Convert to numpy array for easier manipulation
+    avg_weights = np.array(avg_weights)
+
+    # Add DP noise to the aggregated weights
+    dp_weights = []
+    for weights in avg_weights:
+        # Apply Laplace noise to each layer's weights
+        dp_weights.append(add_laplace_noise(weights, epsilon, sensitivity))
+    
+    return dp_weights
+
 
 def get_versioned_filename(version: int, prefix="g", extension="keras"):
     filename = f"{prefix}{version}.{extension}"
     return filename
 
 def get_latest_model_version() -> str:
-    # Fetch the latest model version based on saved files or in-memory state
-    container_client = blob_service_client_server.get_container_client(SERVER_CONTAINER_NAME)
-    blobs = container_client.list_blobs(name_starts_with="g")
+    # Fetch the latest model version from the database
+    db = get_db()
+    latest_model = db.query(GlobalModel).order_by(GlobalModel.version.desc()).first()
     
-    latest_version = 0
-    for blob in blobs:
-        match = re.match(r"g(\d+)\.keras", blob.name)
-        if match:
-            version = int(match.group(1))
-            if version > latest_version:
-                latest_version = version
-    
-    return f"g{latest_version}.keras" if latest_version > 0 else "none"
+    if latest_model:
+        return f"g{latest_model.version}.keras"
+    return "none"
+
 
 # Admin authentication function
 def verify_admin(api_key: str):
     admin_key = os.getenv("ADMIN_API_KEY", "your_admin_secret_key")
     if api_key != admin_key:
         raise HTTPException(status_code=403, detail="Unauthorized admin access")
+
+
+@app.get("/")
+async def root():
+    return "HELLO, WORLD"
+
 
 # Modified registration endpoint
 @app.post("/register")
@@ -323,98 +533,225 @@ async def register(
         "data": {"client_id": client_id, "api_key": api_key}
     }
 
-# Modified WebSocket endpoint
-@app.websocket("/ws/{client_id}")
-async def websocket_endpoint(
-    websocket: WebSocket,
-    client_id: str,
-    db: Session = Depends(get_db)
-):
-    client = db.query(Client).filter(Client.client_id == client_id).first()
-    if not client:
-        await websocket.close(code=1008, reason="Unauthorized")
-        logging.error(f"Unauthorized connection attempt from client {client_id}")
-        return
 
-    await manager.connect(client_id, websocket)
-    try:
-        latest_model_version = get_latest_model_version()
-        await websocket.send_text(f"LATEST_MODEL:{latest_model_version}")
+# @app.get("/aggregate-weights")
+# async def aggregate_weights():
+#     db = next(get_db())
+#     try:
+#         model = get_model_architecture()
+#         if not model:
+#             raise HTTPException(status_code=500, detail="Failed to load model architecture")
+
+#         weights_list, num_examples_list, loss_list, new_timestamp = load_weights_from_blob(
+#             blob_service_client_client, 
+#             CLIENT_CONTAINER_NAME, 
+#             model, 
+#             global_vars['last_processed_timestamp']
+#         )
+
+#         if not weights_list:
+#             return {"status": "no_update", "message": "No new weights found", "num_clients": 0}
+#         if len(weights_list) < 2:
+#             return {"status": "no_update", "message": "Only 1 weight file found", "num_clients": 1}
+#         if not num_examples_list:
+#             print("Example counts missing for aggregation")
+#             logging.error("Example counts missing for aggregation")
+#             return None
+
+#         # global_vars['latest_version'] += 1
+#         # Synchronize latest version from the database
+#         latest_model = db.query(GlobalModel).order_by(GlobalModel.version.desc()).first()
+#         global_vars['latest_version'] = latest_model.version if latest_model else 0
+
+#         # Increment version
+#         global_vars['latest_version'] += 1
+#         # Ensure no duplicate version
+#         if db.query(GlobalModel).filter_by(version=global_vars['latest_version']).first():
+#             raise HTTPException(status_code=409, detail=f"Model with version {global_vars['latest_version']} already exists")
+
+#         filename = get_versioned_filename(global_vars['latest_version'])
+
+#         # avg_weights = federated_averaging(weights_list)
+#         logging.info(f"Aggregating weights from {len(weights_list)} clients")
+#         # avg_weights = federated_weighted_averaging(weights_list, num_examples_list, loss_list)
+#         epsilon = 0.5  # Privacy budget (0.1 == 0.5 inc in loss, lower value == high noise)
+#         sensitivity = 1.0  # Sensitivity
+#         avg_weights = federated_weighted_averaging_with_dp(weights_list, num_examples_list, loss_list, epsilon, sensitivity)
+#         logging.info(f"Aggregation completed.")
+#         if not avg_weights or not save_weights_to_blob(avg_weights, filename, model):
+#             raise HTTPException(status_code=500, detail="Failed to save aggregated weights")
+
+#         global_vars['last_processed_timestamp'] = new_timestamp
         
-        while True:
-            data = await websocket.receive_text()
-            logging.info(f"Message from client {client_id}: {data}")
-    except WebSocketDisconnect:
-        await manager.disconnect(client_id)
-    except Exception as e:
-        logging.error(f"Error in websocket connection for client {client_id}: {e}")
-        await manager.disconnect(client_id)
+#         # Update database
+#         client_ids = [c.client_id for c in db.query(Client).all()]
+#         new_model = GlobalModel(
+#             version=global_vars['latest_version'],
+#             num_clients_contributed=len(weights_list),
+#             client_ids=",".join(client_ids)
+#         )
+#         db.add(new_model)
+        
+#         # Get the client IDs of the contributing clients
+#         contributing_client_ids = [client.client_id for client in db.query(Client).filter(Client.client_id.in_(client_ids)).all()]
+
+#         # Update contribution counts for only the contributing clients
+#         db.query(Client).filter(Client.client_id.in_(contributing_client_ids)).update(
+#             {"contribution_count": Client.contribution_count + 1},
+#             synchronize_session=False  # To avoid unnecessary session flush
+#         )
+#         db.commit()
+
+#         await manager.broadcast_model_update(f"NEW_MODEL:{filename}")
+#         return {
+#             "status": "success",
+#             "message": f"Aggregated weights saved as {filename}",
+#             "num_clients": len(weights_list)
+#         }
+#     except Exception as e:
+#         db.rollback()
+#         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/aggregate-weights")
 async def aggregate_weights():
-    """
-    Aggregate weights from all client models and save the result.
-    """
-    global last_processed_timestamp  # Use the global variable to track the last processed timestamp
-    global latest_version  # Use the global variable to track the latest version
-
+    db = next(get_db())
     try:
-        # Load model architecture from blob storage
-        model = get_model_architecture()
-        if model is None:
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to load model architecture from blob storage"
-            )
+        # Load last processed timestamp from the database
+        last_processed_timestamp = load_last_processed_timestamp(db)
+        global_vars['last_processed_timestamp'] = last_processed_timestamp or 0  # Use 0 if no timestamp is found
 
-        # Get client weights with timestamp filtering
-        weights_list, new_last_processed_timestamp = load_weights_from_blob(
-            blob_service_client_client, CLIENT_CONTAINER_NAME, model, last_processed_timestamp
+        model = get_model_architecture()
+        if not model:
+            raise HTTPException(status_code=500, detail="Failed to load model architecture")
+
+        weights_list, num_examples_list, loss_list, new_timestamp = load_weights_from_blob(
+            blob_service_client_client, 
+            CLIENT_CONTAINER_NAME, 
+            model, 
+            global_vars['last_processed_timestamp']
         )
 
         if not weights_list:
-            logging.info("No valid weight files could be loaded for aggregation.")
-            return {
-                "status": "no_update",
-                "message": "No new weights found for aggregation.",
-                "num_clients": 0
-            }
+            return {"status": "no_update", "message": "No new weights found", "num_clients": 0}
+        if len(weights_list) < 2:
+            return {"status": "no_update", "message": "Only 1 weight file found", "num_clients": 1}
+        if not num_examples_list:
+            print("Example counts missing for aggregation")
+            logging.error("Example counts missing for aggregation")
+            return None
 
-        # Perform federated averaging
-        avg_weights = federated_averaging(weights_list)
-        if avg_weights is None:
-            raise HTTPException(
-                status_code=500,
-                detail="Federated averaging failed"
-            )
+        # global_vars['latest_version'] += 1
+        # Synchronize latest version from the database
+        latest_model = db.query(GlobalModel).order_by(GlobalModel.version.desc()).first()
+        global_vars['latest_version'] = latest_model.version if latest_model else 0
 
-        # Save aggregated weights
-        latest_version += 1
-        filename = get_versioned_filename(latest_version)
-        if save_weights_to_blob(avg_weights, filename, model):
-            # Update the last processed timestamp only after successful save
-            last_processed_timestamp = new_last_processed_timestamp
+        # Increment version
+        global_vars['latest_version'] += 1
+        # Ensure no duplicate version
+        if db.query(GlobalModel).filter_by(version=global_vars['latest_version']).first():
+            raise HTTPException(status_code=409, detail=f"Model with version {global_vars['latest_version']} already exists")
 
-            # Notify clients only when new weights are saved
-            await manager.broadcast_model_update(f"NEW_MODEL:{filename}")
-            logging.info(f"Aggregation complete, clients notified about {filename}")
-        else:
-            logging.error("Failed to save aggregated weights")
+        filename = get_versioned_filename(global_vars['latest_version'])
 
+        logging.info(f"Aggregating weights from {len(weights_list)} clients")
+        # epsilon = 0.5  # Privacy budget
+        # sensitivity = 1.0  # Sensitivity
+        # avg_weights = federated_weighted_averaging(weights_list, num_examples_list, loss_list, epsilon, sensitivity)
+        avg_weights = federated_weighted_averaging(weights_list, num_examples_list, loss_list)
+        logging.info(f"Aggregation completed.")
+        if not avg_weights or not save_weights_to_blob(avg_weights, filename, model):
+            raise HTTPException(status_code=500, detail="Failed to save aggregated weights")
+
+        # Save the new timestamp to the database
+        save_last_processed_timestamp(db, new_timestamp)
+
+        # Update the database with model and client information
+        client_ids = [c.client_id for c in db.query(Client).all()]
+        new_model = GlobalModel(
+            version=global_vars['latest_version'],
+            num_clients_contributed=len(weights_list),
+            client_ids=",".join(client_ids)
+        )
+        db.add(new_model)
+        
+        # Get the client IDs of the contributing clients
+        contributing_client_ids = [client.client_id for client in db.query(Client).filter(Client.client_id.in_(client_ids)).all()]
+
+        # Update contribution counts for only the contributing clients
+        db.query(Client).filter(Client.client_id.in_(contributing_client_ids)).update(
+            {"contribution_count": Client.contribution_count + 1},
+            synchronize_session=False  # To avoid unnecessary session flush
+        )
+        db.commit()
+
+        await manager.broadcast_model_update(f"NEW_MODEL:{filename}")
         return {
             "status": "success",
             "message": f"Aggregated weights saved as {filename}",
             "num_clients": len(weights_list)
         }
-
-    except HTTPException:
-        raise
     except Exception as e:
-        logging.error(f"Unexpected error during aggregation: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Unexpected error during aggregation: {str(e)}"
-        )
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.websocket("/ws/{client_id}") 
+async def websocket_endpoint(websocket: WebSocket, client_id: str):
+    db = SessionLocal()  # Direct session creation
+    try:
+        # Check if the client exists in the database
+        client = db.query(Client).filter(Client.client_id == client_id).first()
+        if not client:
+            await websocket.close(code=1008, reason="Unauthorized")
+            return
+
+        # Add the client to the WebSocket manager and update status
+        await manager.connect(client_id, websocket)
+        client.status = "Active"
+        db.commit()
+
+        # Inform the client about their updated status
+        await websocket.send_text(f"Your status is now: {client.status}")
+
+        latest_model = db.query(GlobalModel).order_by(GlobalModel.version.desc()).first()
+        global_vars['latest_version'] = latest_model.version if latest_model else 0
+
+        # Send the latest model version to the client
+        latest_model_version = f"g{global_vars['latest_version']}.keras"
+        await websocket.send_text(f"LATEST_MODEL:{latest_model_version}")
+
+        while True:
+            try:
+                # Receive and handle messages from the client
+                data = await websocket.receive_text()
+
+                if not data:
+                    break
+
+                # Dynamically fetch the client's updated status and send updates if needed
+                updated_client = db.query(Client).filter(Client.client_id == client_id).first()
+                if updated_client and updated_client.status != client.status:
+                    client.status = updated_client.status
+                    db.commit()
+                    await websocket.send_text(f"Your updated status is: {client.status}")
+
+            except Exception as inner_error:
+                logging.error(f"Error handling client {client_id} data: {inner_error}")
+                break
+
+    except WebSocketDisconnect:
+        logging.info(f"Client {client_id} disconnected.")
+    except Exception as e:
+        logging.error(f"WebSocket error for client {client_id}: {e}")
+    finally:
+        # Remove the client from the WebSocket manager and update status
+        await manager.disconnect(client_id)
+        client = db.query(Client).filter(Client.client_id == client_id).first()
+        if client:
+            client.status = "Inactive"
+            db.commit()
+        db.close()
+        logging.info(f"Client {client_id} is inactive. Db updated successfully!")
 
 
 # Scheduler setup
@@ -435,4 +772,5 @@ scheduler.start()
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    print("Starting Server...")
+    uvicorn.run(app, host="localhost", port=8000)
